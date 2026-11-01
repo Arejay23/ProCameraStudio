@@ -18,10 +18,14 @@
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
-	<key>LSRequiresIPhoneOS</key>
-	<true/>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>ProCamera Studio needs camera access so you can compose and capture photos.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>ProCamera Studio saves the photos you capture to your Photos library.</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UILaunchScreen</key>
@@ -30,9 +34,5 @@
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
 	</array>
-	<key>NSCameraUsageDescription</key>
-	<string>ProCamera Studio needs camera access so you can compose and capture photos.</string>
-	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>ProCamera Studio saves the photos you capture to your Photos library.</string>
 </dict>
 </plist>
