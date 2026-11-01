@@ -27,7 +27,9 @@ final class CameraService: NSObject, CameraServicing {
             minWhiteBalanceKelvin: 2000,
             maxWhiteBalanceKelvin: 10000,
             supportsManualFocus: device.isFocusModeSupported(.locked),
-            availableLenses: Self.availableLenses(for: activeConfiguration.position)
+            availableLenses: Self.availableLenses(for: activeConfiguration.position),
+            supportsRAW: !photoOutput.availableRawPhotoPixelFormatTypes.isEmpty,
+            supportsAppleProRAW: photoOutput.isAppleProRAWSupported
         )
     }
 
@@ -54,6 +56,7 @@ final class CameraService: NSObject, CameraServicing {
                 }
                 session.addOutput(photoOutput)
                 photoOutput.maxPhotoQualityPrioritization = .quality
+                updateMaxPhotoDimensions()
             } catch {
                 session.commitConfiguration()
                 throw error
@@ -66,7 +69,9 @@ final class CameraService: NSObject, CameraServicing {
             var requested = configuration
             requested.position = activeConfiguration.position
             requested.lensType = activeConfiguration.lensType
-            activeConfiguration = try applyManualSettings(requested, to: device)
+            var applied = try applyManualSettings(requested, to: device)
+            validatePhotoFormat(&applied)
+            activeConfiguration = applied
             return activeConfiguration
         }
     }
@@ -90,7 +95,9 @@ final class CameraService: NSObject, CameraServicing {
                 var requested = configuration
                 requested.position = self.activeConfiguration.position
                 requested.lensType = self.activeConfiguration.lensType
-                self.activeConfiguration = try self.applyManualSettings(requested, to: device)
+                var applied = try self.applyManualSettings(requested, to: device)
+                self.validatePhotoFormat(&applied)
+                self.activeConfiguration = applied
 
                 let result = self.activeConfiguration
                 DispatchQueue.main.async { completion(.success(result)) }
@@ -115,7 +122,7 @@ final class CameraService: NSObject, CameraServicing {
         }
     }
 
-    func capturePhoto(completion: @escaping (Result<Data, CameraError>) -> Void) {
+    func capturePhoto(completion: @escaping (Result<CapturedPhoto, CameraError>) -> Void) {
         sessionQueue.async { [weak self] in
             guard let self else { return }
 
@@ -124,18 +131,93 @@ final class CameraService: NSObject, CameraServicing {
                 return
             }
 
-            let settings = AVCapturePhotoSettings()
-            settings.photoQualityPrioritization = .quality
+            let format = self.activeConfiguration.photoFormat
+            let settings: AVCapturePhotoSettings
+            do {
+                settings = try self.makePhotoSettings(for: format)
+            } catch {
+                self.photoOutput.isAppleProRAWEnabled = false
+                let cameraError = (error as? CameraError) ?? CameraError.captureFailed(error.localizedDescription)
+                DispatchQueue.main.async { completion(.failure(cameraError)) }
+                return
+            }
 
             var processor: PhotoCaptureProcessor!
-            processor = PhotoCaptureProcessor { [weak self] result in
+            processor = PhotoCaptureProcessor(requestedFormat: format) { [weak self] result in
                 self?.sessionQueue.async {
                     self?.activeCaptures.removeAll { $0 === processor }
+                    // Resting state is always "off" so capability checks (and the
+                    // next capture's settings) never see a stale enabled flag.
+                    self?.photoOutput.isAppleProRAWEnabled = false
                 }
                 DispatchQueue.main.async { completion(result) }
             }
             self.activeCaptures.append(processor)
             self.photoOutput.capturePhoto(with: settings, delegate: processor)
+        }
+    }
+
+    /// Builds settings for the requested format, enabling Apple ProRAW on the
+    /// output only for the duration of this capture. Throws rather than
+    /// silently downgrading to .processed, so the caller can report a real
+    /// failure instead of a capture that doesn't match what was requested.
+    private func makePhotoSettings(for format: PhotoFormat) throws -> AVCapturePhotoSettings {
+        let settings: AVCapturePhotoSettings
+        switch format {
+        case .processed:
+            photoOutput.isAppleProRAWEnabled = false
+            settings = AVCapturePhotoSettings()
+        case .raw:
+            photoOutput.isAppleProRAWEnabled = false
+            guard let rawType = Self.rawPixelFormat(wantsProRAW: false, output: photoOutput) else {
+                throw CameraError.captureFailed("Standard RAW capture isn't supported by this camera/lens.")
+            }
+            settings = AVCapturePhotoSettings(rawPixelFormatType: rawType)
+        case .appleProRAW:
+            guard photoOutput.isAppleProRAWSupported else {
+                throw CameraError.captureFailed("Apple ProRAW isn't supported by this camera/lens.")
+            }
+            photoOutput.isAppleProRAWEnabled = true
+            guard let rawType = Self.rawPixelFormat(wantsProRAW: true, output: photoOutput) else {
+                throw CameraError.captureFailed("Apple ProRAW isn't available right now.")
+            }
+            settings = AVCapturePhotoSettings(rawPixelFormatType: rawType)
+        }
+        settings.photoQualityPrioritization = .quality
+        settings.maxPhotoDimensions = photoOutput.maxPhotoDimensions
+        return settings
+    }
+
+    private static func rawPixelFormat(wantsProRAW: Bool, output: AVCapturePhotoOutput) -> OSType? {
+        let predicate: (OSType) -> Bool = wantsProRAW
+            ? AVCapturePhotoOutput.isAppleProRAWPixelFormat
+            : AVCapturePhotoOutput.isBayerRAWPixelFormat
+        return output.availableRawPhotoPixelFormatTypes.first(where: predicate)
+    }
+
+    /// Resets to .processed if the requested format isn't actually supported,
+    /// e.g. after switching to a lens/position without RAW support.
+    private func validatePhotoFormat(_ configuration: inout CaptureConfiguration) {
+        switch configuration.photoFormat {
+        case .processed:
+            return
+        case .raw:
+            if photoOutput.availableRawPhotoPixelFormatTypes.isEmpty {
+                configuration.photoFormat = .processed
+            }
+        case .appleProRAW:
+            if !photoOutput.isAppleProRAWSupported {
+                configuration.photoFormat = .processed
+            }
+        }
+    }
+
+    private func updateMaxPhotoDimensions() {
+        guard let device = videoDeviceInput?.device else { return }
+        if let maxDimensions = device.activeFormat.supportedMaxPhotoDimensions.max(by: {
+            Int($0.width) * Int($0.height) < Int($1.width) * Int($1.height)
+        }) {
+            photoOutput.maxPhotoDimensions = maxDimensions
         }
     }
 
@@ -160,6 +242,7 @@ final class CameraService: NSObject, CameraServicing {
         videoDeviceInput = input
         activeConfiguration.position = position
         activeConfiguration.lensType = resolvedLens
+        updateMaxPhotoDimensions()
     }
 
     /// iPhone 14 Pro's front camera has no ultra-wide/telephoto; fall back to wide.

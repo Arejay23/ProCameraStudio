@@ -7,7 +7,9 @@ struct CameraControlsView: View {
     var body: some View {
         VStack(spacing: 12) {
             topRow
+            formatPicker
             Spacer()
+            captureInfoBanner
             if isManualPanelVisible {
                 ManualControlsView(viewModel: viewModel)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -28,6 +30,41 @@ struct CameraControlsView: View {
             manualToggleButton
         }
         .padding([.top, .horizontal])
+    }
+
+    @ViewBuilder
+    private var formatPicker: some View {
+        let caps = viewModel.capabilities
+        let formats: [PhotoFormat] = [.processed] + (caps.supportsRAW ? [.raw] : []) + (caps.supportsAppleProRAW ? [.appleProRAW] : [])
+        if formats.count > 1 {
+            Picker("Format", selection: Binding(
+                get: { viewModel.configuration.photoFormat },
+                set: { viewModel.selectPhotoFormat($0) }
+            )) {
+                ForEach(formats, id: \.self) { format in
+                    Text(format.displayName).tag(format)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 220)
+        }
+    }
+
+    @ViewBuilder
+    private var captureInfoBanner: some View {
+        if let info = viewModel.lastCapture {
+            VStack(spacing: 2) {
+                Text(info.formatLabel)
+                    .font(.caption.bold())
+                Text("\(info.width)×\(info.height) · \(String(format: "%.1f", info.fileSizeMB)) MB")
+                    .font(.caption2)
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(.black.opacity(0.65), in: Capsule())
+            .transition(.opacity)
+        }
     }
 
     private var manualToggleButton: some View {

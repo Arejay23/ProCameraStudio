@@ -68,7 +68,29 @@ skipping it "if feasible without destabilizing the camera pipeline," and a real-
 needs a continuous `AVCaptureVideoDataOutput` pipeline that adds real risk to preview stability
 for a feature with no effect on capture correctness.
 
-*(Phases 3–9 unchanged from the original roadmap — see the full phase prompts already
+## Phase 3 — RAW and Apple ProRAW capture (implemented)
+
+Delivered: `PhotoFormat` (new model: `.processed`/`.raw`/`.appleProRAW`) added to
+`CaptureConfiguration` as its format field, exactly as Phase 2's note predicted — selected the
+same way as every other capture setting, through `updateConfiguration`, with the same
+validate-and-clamp-to-reality discipline (an unsupported format silently resets to
+`.processed` rather than being left claiming something the hardware can't do). RAW/ProRAW
+pixel-format discovery uses the documented `AVCapturePhotoOutput.isBayerRAWPixelFormat`/
+`.isAppleProRAWPixelFormat` predicates against `availableRawPhotoPixelFormatTypes` — never
+hardcoded format constants — and `CameraCapabilities` grew `supportsRAW`/`supportsAppleProRAW`
+so the format picker only ever shows what's really available. `photoOutput.maxPhotoDimensions`
+is set from `AVCaptureDevice.Format.supportedMaxPhotoDimensions` on every lens/position change,
+which is what makes ProRAW's 48MP capture possible at all. `PhotoCaptureProcessor` now checks
+`AVCapturePhoto.isRawPhoto` — the framework's own ground truth — against what was requested
+before ever reporting success, and extracts ISO/exposure-time/f-number from the photo's EXIF
+metadata. `CapturedPhoto` (service-layer, carries `Data`) and `CapturedPhotoInfo`
+(`Equatable`, UI-facing, metadata only — deliberately excludes `Data` so a 100MB ProRAW blob
+never sits in `@Published` state) keep the large-payload and display concerns separate.
+`MediaStorageService` needed zero changes — RAW/DNG bytes save through the exact same add-only
+Photos path as processed photos, confirming Phase 1's gap-fix #3 (`MediaStoring` as the one
+Photos I/O boundary) was the right call. Test target grew from 7 to 9 tests.
+
+*(Phases 4–9 unchanged from the original roadmap — see the full phase prompts already
 reviewed with the user. Each should: extend `CaptureConfiguration`/`CameraServicing` rather
 than replace them, route Photos I/O through `MediaStoring`, add tests for new logic, and
 assume physical-device-only testing.)*

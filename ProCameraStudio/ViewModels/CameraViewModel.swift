@@ -18,6 +18,7 @@ final class CameraViewModel: ObservableObject {
     @Published private(set) var capabilities = CameraCapabilities.fallback
     @Published var errorMessage: String?
     @Published var didSavePhoto = false
+    @Published private(set) var lastCapture: CapturedPhotoInfo?
 
     nonisolated let session: AVCaptureSession
     private let cameraService: CameraServicing
@@ -60,6 +61,10 @@ final class CameraViewModel: ObservableObject {
 
     func selectLens(_ lens: LensType) {
         apply { $0.lensType = lens }
+    }
+
+    func selectPhotoFormat(_ format: PhotoFormat) {
+        apply { $0.photoFormat = format }
     }
 
     // MARK: - Manual controls
@@ -165,8 +170,14 @@ final class CameraViewModel: ObservableObject {
             guard let self else { return }
             Task { @MainActor in
                 switch result {
-                case .success(let data):
-                    await self.save(data)
+                case .success(let captured):
+                    let info = CapturedPhotoInfo(from: captured)
+                    self.lastCapture = info
+                    await self.save(captured.data)
+                    try? await Task.sleep(nanoseconds: 4_000_000_000)
+                    if self.lastCapture == info {
+                        self.lastCapture = nil
+                    }
                 case .failure(let error):
                     self.errorMessage = error.errorDescription
                     self.isCapturing = false

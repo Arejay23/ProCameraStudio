@@ -11,9 +11,23 @@ final class MockCameraService: CameraServicing {
         minExposureTargetBias: -2, maxExposureTargetBias: 2,
         minWhiteBalanceKelvin: 2000, maxWhiteBalanceKelvin: 10000,
         supportsManualFocus: true,
-        availableLenses: [.ultraWide, .wide, .telephoto]
+        availableLenses: [.ultraWide, .wide, .telephoto],
+        supportsRAW: true,
+        supportsAppleProRAW: true
     )
-    var capturedPhotoResult: Result<Data, CameraError> = .success(Data([0x01]))
+    var capturedPhotoResult: Result<CapturedPhoto, CameraError> = .success(
+        CapturedPhoto(
+            data: Data([0x01]),
+            isRaw: false,
+            width: 4032,
+            height: 3024,
+            fileSizeBytes: 4_200_000,
+            requestedFormat: .processed,
+            iso: 100,
+            exposureTimeSeconds: 1.0 / 120,
+            fNumber: 1.78
+        )
+    )
 
     private(set) var didStartSession = false
     private(set) var didStopSession = false
@@ -39,7 +53,7 @@ final class MockCameraService: CameraServicing {
         completion(.success(activeConfiguration))
     }
 
-    func capturePhoto(completion: @escaping (Result<Data, CameraError>) -> Void) {
+    func capturePhoto(completion: @escaping (Result<CapturedPhoto, CameraError>) -> Void) {
         completion(capturedPhotoResult)
     }
 }

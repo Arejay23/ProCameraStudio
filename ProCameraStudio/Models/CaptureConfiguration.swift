@@ -31,6 +31,7 @@ enum LensType: String, CaseIterable, Hashable {
 struct CaptureConfiguration: Equatable {
     var position: AVCaptureDevice.Position = .back
     var lensType: LensType = .wide
+    var photoFormat: PhotoFormat = .processed
 
     // If either is non-nil, exposure mode is .custom.
     var manualISO: Float?

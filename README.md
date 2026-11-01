@@ -1,4 +1,4 @@
-# ProCamera Studio — Phase 1 & 2
+# ProCamera Studio — Phase 1, 2 & 3
 
 ## Prerequisites (install these before building)
 
@@ -42,7 +42,7 @@ xcodegen generate
 - [ ] Switch-camera button flips to front camera and back
 - [ ] Capture button saves a photo and it appears in Photos
 - [ ] Backgrounding the app and returning keeps the preview running
-- [ ] `⌘U` in Xcode runs the `ProCameraStudioTests` target and all seven tests pass
+- [ ] `⌘U` in Xcode runs the `ProCameraStudioTests` target and all nine tests pass
 - [ ] Tapping the slider icon (top-right) shows/hides the manual controls panel
 - [ ] Dragging the ISO/Shutter/EV/Focus/White Balance sliders shows an "Auto" button and an
       orange highlight while a manual value is active
@@ -51,11 +51,19 @@ xcodegen generate
 - [ ] Tapping anywhere on the live preview shows a brief orange reticle and refocuses/meters there
 - [ ] The lens segmented control (0.5x/1x/3x) appears only on the back camera and switches lenses
 - [ ] Exposure/Focus lock buttons toggle a filled lock icon
+- [ ] A "Photo / RAW / ProRAW" segmented control appears below the device-name label on the back
+      camera; on the front camera it's hidden (no RAW support there)
+- [ ] Switching to RAW or ProRAW and capturing shows a banner with the actual format, resolution,
+      and file size (e.g. "Apple ProRAW · 8064×6048 · 84.2 MB") that fades out after ~4 seconds
+- [ ] A ProRAW capture produces a noticeably larger/slower save than a Photo capture, and the
+      saved asset is visible and editable as RAW in the Photos app (look for the "RAW" badge)
+- [ ] Switching lens/camera away from one with RAW selected resets the format picker back to
+      "Photo" automatically if the new lens doesn't support RAW
 
-## Known limitations (Phase 1 & 2)
+## Known limitations (Phase 1, 2 & 3)
 
 - Portrait orientation only — landscape is not yet handled.
-- No RAW/ProRAW (Phase 3), no night/long-exposure modes (Phase 4), no video (Phase 5).
+- No night/long-exposure modes (Phase 4), no video (Phase 5).
 - No flash/torch or pinch-to-zoom control yet.
 - No live exposure histogram. The original Phase 2 brief allowed skipping this "if feasible
   without destabilizing the camera pipeline" — a real-time histogram needs a continuous
@@ -69,6 +77,36 @@ xcodegen generate
   different physical camera can have a different valid ISO/shutter/focus range.
 - No app icon artwork yet (placeholder slot only) — required before Phase 9 submission, not
   before on-device testing.
+
+## RAW & Apple ProRAW notes (Phase 3)
+
+What "RAW" means here, and real limits on the iPhone 14 Pro — not aspirational claims:
+
+- **Three capture formats, picked explicitly per shot**: Photo (HEIC, Apple's normal
+  computational pipeline — Smart HDR, Deep Fusion, Night mode all apply), RAW (unprocessed
+  Bayer sensor data — none of that computational processing applies, which is the whole point
+  of "RAW"), and Apple ProRAW (RAW sensor data *with* Apple's computational adjustments baked
+  in as editable metadata — the best of both, Apple's own innovation, only on Pro models).
+- **The format picker only ever shows what the active lens actually supports**, read at
+  runtime from `AVCapturePhotoOutput.availableRawPhotoPixelFormatTypes` and
+  `.isAppleProRAWSupported` — never hardcoded. If RAW/ProRAW isn't available for a given
+  lens/position, that option simply isn't in the list.
+- **Front camera doesn't support RAW or ProRAW at all** on the 14 Pro — the picker is hidden
+  there and the format silently falls back to Photo.
+- **File sizes are large**: ProRAW is roughly 75–110 MB per shot (48MP), standard RAW/DNG
+  somewhat less, versus ~2–5 MB for a HEIC photo. A short RAW test session can use gigabytes.
+- **Capture and save both take noticeably longer** than a processed photo — more data to
+  write, and Photos needs longer to generate the DNG's embedded preview.
+- **The app never claims a RAW capture succeeded if it didn't.** `AVCapturePhoto.isRawPhoto`
+  (not our own assumption) is checked against what was requested before reporting success;
+  if the device silently handed back a processed image instead, that's surfaced as a real
+  error, not a mislabeled photo.
+- **Manual exposure/focus/white-balance settings from Phase 2 carry over automatically** —
+  they're device-level state applied continuously, independent of which photo format is
+  selected, so a RAW or ProRAW shot taken with manual ISO/shutter active uses those values.
+- Saved RAW/DNG and ProRAW files go through the same add-only Photos write path as processed
+  photos (`MediaStorageService` doesn't need to know the difference) and show up in the
+  Photos app with Apple's native "RAW" badge and editing support.
 
 ## Implications of running a development build on your actual phone
 

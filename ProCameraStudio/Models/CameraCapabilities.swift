@@ -19,6 +19,8 @@ struct CameraCapabilities: Equatable {
     var maxWhiteBalanceKelvin: Float
     var supportsManualFocus: Bool
     var availableLenses: [LensType]
+    var supportsRAW: Bool
+    var supportsAppleProRAW: Bool
 
     static let fallback = CameraCapabilities(
         minISO: 0,
@@ -30,6 +32,8 @@ struct CameraCapabilities: Equatable {
         minWhiteBalanceKelvin: 2000,
         maxWhiteBalanceKelvin: 10000,
         supportsManualFocus: false,
-        availableLenses: []
+        availableLenses: [],
+        supportsRAW: false,
+        supportsAppleProRAW: false
     )
 }

@@ -20,5 +20,8 @@ protocol CameraServicing: AnyObject {
     /// caller's published state never claims a setting that isn't really active.
     func updateConfiguration(_ configuration: CaptureConfiguration, completion: @escaping (Result<CaptureConfiguration, CameraError>) -> Void)
 
-    func capturePhoto(completion: @escaping (Result<Data, CameraError>) -> Void)
+    /// Captures using activeConfiguration.photoFormat. Reports back what was
+    /// actually captured (AVCapturePhoto.isRawPhoto is the ground truth), never
+    /// claiming RAW/ProRAW succeeded when the device silently returned processed.
+    func capturePhoto(completion: @escaping (Result<CapturedPhoto, CameraError>) -> Void)
 }
