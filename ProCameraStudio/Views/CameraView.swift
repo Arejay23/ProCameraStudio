@@ -2,20 +2,18 @@ import SwiftUI
 
 struct CameraView: View {
     @ObservedObject var viewModel: CameraViewModel
+    @State private var isManualPanelVisible = false
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
 
-            CameraPreviewView(session: viewModel.session)
-                .ignoresSafeArea()
+            CameraPreviewView(session: viewModel.session) { devicePoint in
+                viewModel.focusAndMeter(at: devicePoint)
+            }
+            .ignoresSafeArea()
 
-            CameraControlsView(
-                deviceName: viewModel.activeDeviceName,
-                isCapturing: viewModel.isCapturing,
-                onCapture: viewModel.capturePhoto,
-                onSwitchCamera: viewModel.switchCamera
-            )
+            CameraControlsView(viewModel: viewModel, isManualPanelVisible: $isManualPanelVisible)
         }
         .statusBarHidden(true)
         .alert("Camera Error", isPresented: errorBinding) {

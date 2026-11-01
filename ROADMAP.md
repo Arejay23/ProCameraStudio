@@ -44,15 +44,29 @@ Known Phase 1 limitations (see `README.md` for the full list): portrait orientat
 single best-available camera per position (explicit ultra-wide/main/telephoto picker arrives
 in Phase 2), no flash/torch/zoom yet.
 
-## Phase 2 — Professional manual camera controls
+## Phase 2 — Professional manual camera controls (implemented)
 
-Extend `CaptureConfiguration` with manual ISO, shutter duration, focus position, white
-balance, and exposure-bias fields, each `Optional` so "unset" means "follow auto." Discover
-valid ranges from `AVCaptureDevice.activeFormat` at runtime — do not hardcode ranges, since
-they differ across the ultra-wide/main/telephoto lenses on the 14 Pro. Lens selection becomes
-an explicit `AVCaptureDevice.DeviceType` choice in `CaptureConfiguration` rather than the
-Phase 1 "pick the richest system" default. Add exposure/focus lock as additional
-configuration fields, not side-channel state.
+Delivered: `CaptureConfiguration` extended with optional manual ISO, shutter duration (`CMTime`),
+exposure bias, focus lens position, and white-balance Kelvin fields, plus tap-to-focus/meter
+points and exposure/focus lock flags — all still one struct, so Phase 3's format selection
+extends it the same way. `CameraCapabilities` (new model) reports the active device/format's real
+ISO/shutter/exposure-bias ranges and available lenses, discovered at runtime via
+`AVCaptureDevice.activeFormat`, never hardcoded. Lens selection is now an explicit
+`AVCaptureDevice.DeviceType` choice (ultra-wide/wide/telephoto) replacing Phase 1's "pick the
+richest system" default, since manual controls apply per physical lens, not a virtual
+multi-cam device. `CameraServicing.updateConfiguration` became async (session-queue dispatch +
+main-thread completion) instead of blocking-sync, so dragging a slider can't stall the UI —
+`CameraService` always reports back the configuration it actually applied, clamped to the
+device's real ranges or falling back to auto when a mode isn't supported, so published state
+never claims a manual value that isn't really active on the hardware. Tap-to-focus/meter is
+handled via a `UITapGestureRecognizer` in `CameraPreviewView` converting layer points to device
+points through `captureDevicePointConverted(fromLayerPoint:)`, with a UIKit-drawn reticle for
+feedback. Test target grew from 4 to 7 tests.
+
+Deliberately deferred (see `README.md`): a live exposure histogram — the roadmap allowed
+skipping it "if feasible without destabilizing the camera pipeline," and a real-time histogram
+needs a continuous `AVCaptureVideoDataOutput` pipeline that adds real risk to preview stability
+for a feature with no effect on capture correctness.
 
 *(Phases 3–9 unchanged from the original roadmap — see the full phase prompts already
 reviewed with the user. Each should: extend `CaptureConfiguration`/`CameraServicing` rather

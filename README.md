@@ -1,4 +1,4 @@
-# ProCamera Studio — Phase 1
+# ProCamera Studio — Phase 1 & 2
 
 ## Prerequisites (install these before building)
 
@@ -42,16 +42,31 @@ xcodegen generate
 - [ ] Switch-camera button flips to front camera and back
 - [ ] Capture button saves a photo and it appears in Photos
 - [ ] Backgrounding the app and returning keeps the preview running
-- [ ] `⌘U` in Xcode runs the `ProCameraStudioTests` target and all four tests pass
+- [ ] `⌘U` in Xcode runs the `ProCameraStudioTests` target and all seven tests pass
+- [ ] Tapping the slider icon (top-right) shows/hides the manual controls panel
+- [ ] Dragging the ISO/Shutter/EV/Focus/White Balance sliders shows an "Auto" button and an
+      orange highlight while a manual value is active
+- [ ] Tapping "Auto" on any row (or "Reset All") returns that control to automatic and the
+      highlight disappears
+- [ ] Tapping anywhere on the live preview shows a brief orange reticle and refocuses/meters there
+- [ ] The lens segmented control (0.5x/1x/3x) appears only on the back camera and switches lenses
+- [ ] Exposure/Focus lock buttons toggle a filled lock icon
 
-## Known limitations (Phase 1)
+## Known limitations (Phase 1 & 2)
 
 - Portrait orientation only — landscape is not yet handled.
-- No manual exposure/ISO/white-balance controls (Phase 2).
 - No RAW/ProRAW (Phase 3), no night/long-exposure modes (Phase 4), no video (Phase 5).
-- Back camera always uses the richest available system (triple camera on 14 Pro) with no
-  explicit ultra-wide/main/telephoto picker yet — that arrives in Phase 2.
 - No flash/torch or pinch-to-zoom control yet.
+- No live exposure histogram. The original Phase 2 brief allowed skipping this "if feasible
+  without destabilizing the camera pipeline" — a real-time histogram needs a continuous
+  `AVCaptureVideoDataOutput` sample-buffer pipeline running alongside the photo pipeline, which
+  is real added risk to preview stability for a feature with no capture-correctness impact. Left
+  for a later phase rather than bolted on here.
+- White balance Kelvin slider range (2000K–10000K) is a fixed, conventional UI range, not a
+  device-reported one — AVFoundation exposes a max white-balance *gain*, not a documented Kelvin
+  range. Actual applied gains are always clamped to the device's real `maxWhiteBalanceGain`.
+- Manual settings reset to auto automatically when you switch lens or front/rear camera, since a
+  different physical camera can have a different valid ISO/shutter/focus range.
 - No app icon artwork yet (placeholder slot only) — required before Phase 9 submission, not
   before on-device testing.
 

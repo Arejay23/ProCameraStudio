@@ -38,6 +38,45 @@ final class CameraViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testSetManualISOUpdatesConfiguration() async {
+        let cameraService = MockCameraService(authorized: true)
+        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: MockMediaStorage(authorized: true))
+        await viewModel.start()
+
+        viewModel.setManualISO(200)
+
+        XCTAssertEqual(viewModel.configuration.manualISO, 200)
+        XCTAssertEqual(cameraService.activeConfiguration.manualISO, 200)
+    }
+
+    @MainActor
+    func testResetToAutoClearsManualOverrides() async {
+        let cameraService = MockCameraService(authorized: true)
+        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: MockMediaStorage(authorized: true))
+        await viewModel.start()
+        viewModel.setManualISO(400)
+        viewModel.setManualFocus(0.3)
+
+        viewModel.resetToAuto()
+
+        XCTAssertNil(viewModel.configuration.manualISO)
+        XCTAssertNil(viewModel.configuration.manualFocusLensPosition)
+    }
+
+    @MainActor
+    func testFocusAndMeterClearsManualExposureAndFocus() async {
+        let cameraService = MockCameraService(authorized: true)
+        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: MockMediaStorage(authorized: true))
+        await viewModel.start()
+        viewModel.setManualISO(400)
+
+        viewModel.focusAndMeter(at: CGPoint(x: 0.5, y: 0.5))
+
+        XCTAssertNil(viewModel.configuration.manualISO)
+        XCTAssertEqual(viewModel.configuration.focusPointOfInterest, CGPoint(x: 0.5, y: 0.5))
+    }
+
+    @MainActor
     func testCapturePhotoSavesWhenAuthorized() async throws {
         let cameraService = MockCameraService(authorized: true)
         let mediaStorage = MockMediaStorage(authorized: true)
