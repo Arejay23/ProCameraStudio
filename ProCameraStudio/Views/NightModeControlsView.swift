@@ -30,10 +30,24 @@ struct NightModeControlsView: View {
             }
             .pickerStyle(.segmented)
 
-            Text(selectedMode.explanation)
-                .font(.caption2)
-                .foregroundStyle(.white.opacity(0.7))
-                .fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .top, spacing: 10) {
+                NightModePreviewIllustration(mode: selectedMode)
+                Text(selectedMode.explanation)
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.7))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            DisclosureGroup("Best Settings") {
+                Text(selectedMode.bestSettingsTip)
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.75))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 4)
+            }
+            .font(.caption.bold())
+            .foregroundStyle(.white.opacity(0.85))
+            .tint(.white)
 
             if !viewModel.isDeviceStable, viewModel.multiFrameProgress != nil {
                 Label("Hold steady for best results", systemImage: "exclamationmark.triangle.fill")

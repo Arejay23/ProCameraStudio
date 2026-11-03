@@ -53,4 +53,15 @@ enum NightCaptureMode: String, CaseIterable, Hashable {
             return "Keeps the brightest value seen at each pixel across many frames, so moving points of light leave trails without the sky washing out. Computational stacking, not one long sensor exposure."
         }
     }
+
+    var bestSettingsTip: String {
+        switch self {
+        case .noiseReduction:
+            return "Best for: low light, handheld. Keep the subject still — this blends frames shot moments apart, so motion will blur. No tripod required, but steadier is better."
+        case .longExposure:
+            return "Best for: light trails, flowing water, moving clouds. Use a tripod — the blur only looks intentional when the camera itself stays still."
+        case .starTrails:
+            return "Best for: a clear night sky, away from city light pollution. Requires a tripod — any camera movement breaks the trail effect. Longer capture = longer trails; try the default 20 frames first."
+        }
+    }
 }

@@ -28,6 +28,7 @@
 		CB4FC3D8FD1CDA3D2A323A92 /* CapturedPhoto.swift in Sources */ = {isa = PBXBuildFile; fileRef = 477ACA35C45A973C0F3263E2 /* CapturedPhoto.swift */; };
 		CB6F7222869CF0D7C7A878D8 /* MultiFrameCaptureSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAD5F19AD80F3EB6DA701032 /* MultiFrameCaptureSettings.swift */; };
 		D12B41B16C7583C45524F089 /* CaptureConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AE35E55524077510E110301 /* CaptureConfiguration.swift */; };
+		D18D097358E394A9E6D89046 /* NightModePreviewIllustration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3250D99D47B631CE768D2A13 /* NightModePreviewIllustration.swift */; };
 		EEF8296D6B4E7E359D643545 /* CameraError.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5921265EAC8D061BC3F0B09 /* CameraError.swift */; };
 		F1D5ABA47DB9249B2C270595 /* CameraServicing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DAAB881AD1B3DDF82883821 /* CameraServicing.swift */; };
 		F6939FBB2A5509BF58ED687C /* PhotoFormat.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05495E300870D85FF65E8DC2 /* PhotoFormat.swift */; };
@@ -53,6 +54,7 @@
 		06888D9FCEC59740014C9C8F /* CameraViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraViewModel.swift; sourceTree = "<group>"; };
 		13DB3333BBFAD03072804F88 /* PhotoCaptureProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoCaptureProcessor.swift; sourceTree = "<group>"; };
 		275A0BF9EEB6202286F65877 /* BracketSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BracketSettings.swift; sourceTree = "<group>"; };
+		3250D99D47B631CE768D2A13 /* NightModePreviewIllustration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NightModePreviewIllustration.swift; sourceTree = "<group>"; };
 		3CB32EBFD8078D1161687F0B /* CapturedPhotoInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapturedPhotoInfo.swift; sourceTree = "<group>"; };
 		44B32A4E945B3D87163D79F0 /* PermissionDeniedView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionDeniedView.swift; sourceTree = "<group>"; };
 		477ACA35C45A973C0F3263E2 /* CapturedPhoto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapturedPhoto.swift; sourceTree = "<group>"; };
@@ -104,6 +106,7 @@
 				62D841A4EA59D1DBE0464CD1 /* ContentView.swift */,
 				D9CBBAC1AC3BE27817744176 /* ManualControlsView.swift */,
 				037D0452838FD0372FB2A2A9 /* NightModeControlsView.swift */,
+				3250D99D47B631CE768D2A13 /* NightModePreviewIllustration.swift */,
 				44B32A4E945B3D87163D79F0 /* PermissionDeniedView.swift */,
 			);
 			path = Views;
@@ -305,6 +308,7 @@
 				CB6F7222869CF0D7C7A878D8 /* MultiFrameCaptureSettings.swift in Sources */,
 				FE5A26D3199AB4A845C38D86 /* NightCaptureMode.swift in Sources */,
 				2820B67CB378E094DC2E93AC /* NightModeControlsView.swift in Sources */,
+				D18D097358E394A9E6D89046 /* NightModePreviewIllustration.swift in Sources */,
 				C5D8508E5BF72DE22C8945FD /* PermissionDeniedView.swift in Sources */,
 				9A119CE0FE9D912E42624F9E /* PhotoCaptureProcessor.swift in Sources */,
 				F6939FBB2A5509BF58ED687C /* PhotoFormat.swift in Sources */,
