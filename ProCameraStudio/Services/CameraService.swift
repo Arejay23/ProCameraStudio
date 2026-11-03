@@ -87,6 +87,9 @@ final class CameraService: NSObject, CameraServicing {
                     self.session.beginConfiguration()
                     defer { self.session.commitConfiguration() }
                     try self.setVideoInput(for: configuration.position, lensType: configuration.lensType)
+                    // photoOutput is already connected (added once, in configureSession)
+                    // so this is safe here, unlike the first-ever setup.
+                    self.updateMaxPhotoDimensions()
                 }
 
                 guard let device = self.videoDeviceInput?.device else {
@@ -242,7 +245,10 @@ final class CameraService: NSObject, CameraServicing {
         videoDeviceInput = input
         activeConfiguration.position = position
         activeConfiguration.lensType = resolvedLens
-        updateMaxPhotoDimensions()
+        // Callers must set maxPhotoDimensions themselves, after photoOutput is
+        // actually connected — on the very first setup (configureSession) that
+        // output doesn't exist yet, and AVCapturePhotoOutput throws if you set
+        // maxPhotoDimensions before it has a connected device with an activeFormat.
     }
 
     /// iPhone 14 Pro's front camera has no ultra-wide/telephoto; fall back to wide.
