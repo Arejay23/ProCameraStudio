@@ -2,7 +2,7 @@ import SwiftUI
 
 struct CameraControlsView: View {
     @ObservedObject var viewModel: CameraViewModel
-    @Binding var isManualPanelVisible: Bool
+    @Binding var activePanel: ActivePanel
 
     var body: some View {
         VStack(spacing: 12) {
@@ -10,9 +10,15 @@ struct CameraControlsView: View {
             formatPicker
             Spacer()
             captureInfoBanner
-            if isManualPanelVisible {
+            switch activePanel {
+            case .manual:
                 ManualControlsView(viewModel: viewModel)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
+            case .night:
+                NightModeControlsView(viewModel: viewModel)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            case .none:
+                EmptyView()
             }
             bottomRow
         }
@@ -27,7 +33,8 @@ struct CameraControlsView: View {
                 .padding(.vertical, 4)
                 .background(.black.opacity(0.4), in: Capsule())
             Spacer()
-            manualToggleButton
+            panelToggleButton(icon: "moon.stars", panel: .night, label: "Night mode controls")
+            panelToggleButton(icon: "slider.horizontal.3", panel: .manual, label: "Manual controls")
         }
         .padding([.top, .horizontal])
     }
@@ -67,15 +74,17 @@ struct CameraControlsView: View {
         }
     }
 
-    private var manualToggleButton: some View {
-        Button(action: { withAnimation { isManualPanelVisible.toggle() } }) {
-            Image(systemName: "slider.horizontal.3")
+    private func panelToggleButton(icon: String, panel: ActivePanel, label: String) -> some View {
+        Button(action: {
+            withAnimation { activePanel = (activePanel == panel) ? .none : panel }
+        }) {
+            Image(systemName: icon)
                 .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(isManualPanelVisible ? .orange : .white)
+                .foregroundStyle(activePanel == panel ? .orange : .white)
                 .frame(width: 36, height: 36)
                 .background(.black.opacity(0.4), in: Circle())
         }
-        .accessibilityLabel("Manual controls")
+        .accessibilityLabel(label)
     }
 
     private var bottomRow: some View {
@@ -90,13 +99,13 @@ struct CameraControlsView: View {
     }
 
     private var captureButton: some View {
-        Button(action: viewModel.capturePhoto) {
+        Button(action: viewModel.captureButtonTapped) {
             ZStack {
                 Circle()
                     .stroke(.white, lineWidth: 4)
                     .frame(width: 78, height: 78)
                 Circle()
-                    .fill(.white)
+                    .fill(viewModel.countdownSeconds != nil ? .orange : .white)
                     .frame(width: 66, height: 66)
                     .opacity(viewModel.isCapturing ? 0.4 : 1.0)
             }

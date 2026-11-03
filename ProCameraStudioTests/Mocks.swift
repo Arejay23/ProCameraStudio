@@ -56,11 +56,51 @@ final class MockCameraService: CameraServicing {
     func capturePhoto(completion: @escaping (Result<CapturedPhoto, CameraError>) -> Void) {
         completion(capturedPhotoResult)
     }
+
+    var multiFrameResult: Result<MultiFrameCaptureResult, CameraError> = .success(
+        MultiFrameCaptureResult(
+            stacked: CapturedPhoto(
+                data: Data([0x03]),
+                isRaw: false,
+                width: 4032,
+                height: 3024,
+                fileSizeBytes: 5_000_000,
+                requestedFormat: .processed,
+                iso: nil,
+                exposureTimeSeconds: nil,
+                fNumber: nil
+            ),
+            originalFrames: []
+        )
+    )
+
+    func captureMultiFrameBurst(settings: MultiFrameCaptureSettings, progress: @escaping (Int, Int) -> Void) async throws -> MultiFrameCaptureResult {
+        for index in 1...max(settings.frameCount, 1) {
+            progress(index, settings.frameCount)
+        }
+        switch multiFrameResult {
+        case .success(let result): return result
+        case .failure(let error): throw error
+        }
+    }
+
+    var bracketResult: Result<[CapturedPhoto], CameraError> = .success([])
+
+    func captureExposureBracket(settings: BracketSettings, progress: @escaping (Int, Int) -> Void) async throws -> [CapturedPhoto] {
+        for index in 1...max(settings.frameCount, 1) {
+            progress(index, settings.frameCount)
+        }
+        switch bracketResult {
+        case .success(let frames): return frames
+        case .failure(let error): throw error
+        }
+    }
 }
 
 final class MockMediaStorage: MediaStoring {
     private let authorized: Bool
     private(set) var savedData: Data?
+    private(set) var savedDataHistory: [Data] = []
 
     init(authorized: Bool) {
         self.authorized = authorized
@@ -70,6 +110,7 @@ final class MockMediaStorage: MediaStoring {
 
     func savePhotoData(_ data: Data, completion: @escaping (Result<Void, CameraError>) -> Void) {
         savedData = data
+        savedDataHistory.append(data)
         completion(.success(()))
     }
 }

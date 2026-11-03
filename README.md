@@ -1,4 +1,4 @@
-# ProCamera Studio — Phase 1, 2 & 3
+# ProCamera Studio — Phase 1, 2, 3 & 4
 
 ## Prerequisites (install these before building)
 
@@ -42,7 +42,7 @@ xcodegen generate
 - [ ] Switch-camera button flips to front camera and back
 - [ ] Capture button saves a photo and it appears in Photos
 - [ ] Backgrounding the app and returning keeps the preview running
-- [ ] `⌘U` in Xcode runs the `ProCameraStudioTests` target and all nine tests pass
+- [ ] `⌘U` in Xcode runs the `ProCameraStudioTests` target and all twelve tests pass
 - [ ] Tapping the slider icon (top-right) shows/hides the manual controls panel
 - [ ] Dragging the ISO/Shutter/EV/Focus/White Balance sliders shows an "Auto" button and an
       orange highlight while a manual value is active
@@ -59,11 +59,26 @@ xcodegen generate
       saved asset is visible and editable as RAW in the Photos app (look for the "RAW" badge)
 - [ ] Switching lens/camera away from one with RAW selected resets the format picker back to
       "Photo" automatically if the new lens doesn't support RAW
+- [ ] Tapping the moon icon (top-right) shows/hides the night-mode panel; it closes the manual
+      panel if that was open (and vice versa) — only one panel shows at a time
+- [ ] Picking "Noise Reduction," "Long Exposure," or "Star Trails" and tapping "Start ___" shows
+      a progress bar ("Frame X of N") with a working Cancel button
+- [ ] Letting a stacking capture finish saves one merged photo to Photos (not N separate photos)
+      unless "Save original frames" was on, in which case the originals save too
+- [ ] Moving the phone during a stacking capture shows a "Hold steady for best results" warning
+- [ ] "Capture Bracket" takes 3 photos at different exposures in quick succession, all three save
+      to Photos individually, and the camera's exposure returns to normal afterward
+- [ ] Setting the Timer to 3s or 10s and tapping the shutter button counts down on-screen before
+      capturing; tapping the shutter again during the countdown cancels it
+- [ ] Starting interval capture takes a photo repeatedly at the chosen interval until you tap
+      "Stop Interval Capture"
+- [ ] Backgrounding the app (or leaving the camera screen) while any Phase 4 sequence is running
+      cancels it cleanly instead of continuing against a torn-down session
 
-## Known limitations (Phase 1, 2 & 3)
+## Known limitations (Phase 1–4)
 
 - Portrait orientation only — landscape is not yet handled.
-- No night/long-exposure modes (Phase 4), no video (Phase 5).
+- No video (Phase 5).
 - No flash/torch or pinch-to-zoom control yet.
 - No live exposure histogram. The original Phase 2 brief allowed skipping this "if feasible
   without destabilizing the camera pipeline" — a real-time histogram needs a continuous
@@ -107,6 +122,40 @@ What "RAW" means here, and real limits on the iPhone 14 Pro — not aspirational
 - Saved RAW/DNG and ProRAW files go through the same add-only Photos write path as processed
   photos (`MediaStorageService` doesn't need to know the difference) and show up in the
   Photos app with Apple's native "RAW" badge and editing support.
+
+## Night photography & long exposure notes (Phase 4)
+
+What's a real sensor capture here, and what's computational — stated plainly, since it's easy
+for "night mode" marketing language to blur this:
+
+- **Nothing in Phase 4 makes the sensor expose for longer than one normal frame.** The iPhone
+  14 Pro's public camera APIs don't offer an arbitrary multi-second shutter speed — Phase 2's
+  manual shutter slider already exposes the real, format-dependent maximum
+  (`AVCaptureDevice.Format.maxExposureDuration`), and every Phase 4 mode works within that same
+  limit per frame.
+- **"Long Exposure" and "Noise Reduction" are the same algorithm** (`FrameStacker` averaging),
+  just with different frame-count/interval presets. Averaging many quick frames together
+  simulates the smoothing/motion-blur look of a long exposure and reduces random sensor noise
+  in low light — both are the same math, a running weighted average computed in Core Image, not
+  two different techniques.
+- **"Star Trails" uses a genuinely different algorithm**: max-value stacking
+  (`CIMaximumCompositing`), which keeps the brightest value seen at each pixel across frames
+  instead of averaging. Averaging a night sky would just dim/blur moving stars into the
+  background; taking the maximum is what actually produces visible trails.
+- **No feature-based frame alignment.** All three modes assume a relatively stable camera —
+  that's what "tripod-friendly" means here. There's no Vision-framework image registration
+  correcting for handheld drift between frames; instead, `MotionMonitor` (CoreMotion) shows a
+  "Hold steady" warning during capture so you know when that assumption is being violated,
+  rather than silently producing a blurry/misaligned result and calling it done.
+- **Exposure bracketing captures real, distinct exposures** — this one *is* a true sensor
+  difference between frames (each frame genuinely uses a different exposure bias), not a
+  computational effect. The three frames are saved individually; merging them into one HDR
+  image is Phase 6's job.
+- **Memory stays bounded by default.** `FrameStacker` accumulates into one running CIImage
+  rather than holding every frame in memory — "Save original frames" is an explicit opt-in that
+  trades that efficiency for keeping every raw frame too.
+- **A critical thermal state blocks starting a new stacking capture** (checked once, at the
+  start) rather than letting a long burst run while the phone is already overheating.
 
 ## Implications of running a development build on your actual phone
 

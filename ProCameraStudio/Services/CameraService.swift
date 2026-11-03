@@ -1,4 +1,4 @@
-import AVFoundation
+@preconcurrency import AVFoundation
 
 final class CameraService: NSObject, CameraServicing {
 
@@ -352,6 +352,115 @@ final class CameraService: NSObject, CameraServicing {
             }
             if device.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
                 device.whiteBalanceMode = .continuousAutoWhiteBalance
+            }
+        }
+    }
+
+    // MARK: - Multi-frame capture (Phase 4)
+
+    func captureMultiFrameBurst(settings: MultiFrameCaptureSettings, progress: @escaping (Int, Int) -> Void) async throws -> MultiFrameCaptureResult {
+        let stacker = FrameStacker(algorithm: settings.algorithm)
+        var originals: [CapturedPhoto] = []
+
+        for index in 0..<max(settings.frameCount, 1) {
+            try Task.checkCancellation()
+            let captured = try await captureSingleFrameForStacking()
+            stacker.add(captured)
+            if settings.saveOriginalFrames {
+                originals.append(captured)
+            }
+            progress(index + 1, settings.frameCount)
+
+            if index < settings.frameCount - 1 {
+                try await Task.sleep(nanoseconds: UInt64(max(settings.intervalSeconds, 0) * 1_000_000_000))
+            }
+        }
+
+        guard let stacked = stacker.finish() else {
+            throw CameraError.captureFailed("No frames were captured.")
+        }
+        return MultiFrameCaptureResult(stacked: stacked, originalFrames: originals)
+    }
+
+    func captureExposureBracket(settings: BracketSettings, progress: @escaping (Int, Int) -> Void) async throws -> [CapturedPhoto] {
+        guard let device = videoDeviceInput?.device else { throw CameraError.deviceUnavailable }
+        let centerBias = activeConfiguration.exposureBias ?? 0
+        let offsets = Self.bracketOffsets(count: settings.frameCount, stepEV: settings.exposureStepEV)
+        var frames: [CapturedPhoto] = []
+
+        for (index, offset) in offsets.enumerated() {
+            try Task.checkCancellation()
+            let bias = clamp(centerBias + offset, device.minExposureTargetBias, device.maxExposureTargetBias)
+            try await setExposureBiasOnly(bias, device: device)
+            let captured = try await captureSingleFrameForStacking()
+            frames.append(captured)
+            progress(index + 1, offsets.count)
+        }
+
+        try? await setExposureBiasOnly(centerBias, device: device)
+        return frames
+    }
+
+    private static func bracketOffsets(count: Int, stepEV: Float) -> [Float] {
+        guard count > 1 else { return [0] }
+        let half = Float(count - 1) / 2
+        return (0..<count).map { (Float($0) - half) * stepEV }
+    }
+
+    /// Sets exposure bias and waits for AVFoundation's own completion handler,
+    /// which fires once the new bias has actually taken effect on a frame —
+    /// important for bracketing, where capturing too early would reuse the
+    /// previous frame's exposure.
+    private func setExposureBiasOnly(_ bias: Float, device: AVCaptureDevice) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            sessionQueue.async {
+                do {
+                    try device.lockForConfiguration()
+                } catch {
+                    continuation.resume(throwing: CameraError.configurationFailed("Camera is busy: \(error.localizedDescription)"))
+                    return
+                }
+                device.setExposureTargetBias(bias) { _ in
+                    continuation.resume()
+                }
+                device.unlockForConfiguration()
+            }
+        }
+    }
+
+    /// Single-frame capture used by burst/bracket sequences: always .processed
+    /// (RAW bursts would be impractically large), favoring speed over quality
+    /// since consistency across frames matters more than any one frame here.
+    private func captureSingleFrameForStacking() async throws -> CapturedPhoto {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<CapturedPhoto, Error>) in
+            sessionQueue.async { [weak self] in
+                guard let self else {
+                    continuation.resume(throwing: CameraError.captureFailed("Camera unavailable"))
+                    return
+                }
+                guard self.session.isRunning else {
+                    continuation.resume(throwing: CameraError.captureFailed("Camera session is not running"))
+                    return
+                }
+
+                let settings = AVCapturePhotoSettings()
+                settings.photoQualityPrioritization = .speed
+                settings.maxPhotoDimensions = self.photoOutput.maxPhotoDimensions
+
+                var processor: PhotoCaptureProcessor!
+                processor = PhotoCaptureProcessor(requestedFormat: .processed) { [weak self] result in
+                    self?.sessionQueue.async {
+                        self?.activeCaptures.removeAll { $0 === processor }
+                    }
+                    switch result {
+                    case .success(let photo):
+                        continuation.resume(returning: photo)
+                    case .failure(let error):
+                        continuation.resume(throwing: error)
+                    }
+                }
+                self.activeCaptures.append(processor)
+                self.photoOutput.capturePhoto(with: settings, delegate: processor)
             }
         }
     }

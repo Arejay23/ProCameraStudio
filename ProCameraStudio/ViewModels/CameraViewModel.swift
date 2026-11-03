@@ -1,4 +1,5 @@
 import AVFoundation
+import Combine
 import Foundation
 
 @MainActor
@@ -20,14 +21,35 @@ final class CameraViewModel: ObservableObject {
     @Published var didSavePhoto = false
     @Published private(set) var lastCapture: CapturedPhotoInfo?
 
+    // Phase 4: timed/sequence capture. These are transient workflow state, not
+    // continuous device settings, so they live here rather than in
+    // CaptureConfiguration/CameraServicing.
+    @Published var countdownDuration = 0
+    @Published private(set) var countdownSeconds: Int?
+    @Published private(set) var isIntervalCaptureRunning = false
+    @Published private(set) var multiFrameProgress: (current: Int, total: Int)?
+    @Published private(set) var lastMultiFrameCapture: CapturedPhotoInfo?
+    @Published private(set) var bracketProgress: (current: Int, total: Int)?
+    @Published private(set) var isDeviceStable = true
+
     nonisolated let session: AVCaptureSession
     private let cameraService: CameraServicing
     private let mediaStorage: MediaStoring
+    private let motionMonitor = MotionMonitor()
+    private var cancellables = Set<AnyCancellable>()
+
+    private var countdownTask: Task<Void, Never>?
+    private var intervalTask: Task<Void, Never>?
+    private var multiFrameTask: Task<Void, Never>?
+    private var bracketTask: Task<Void, Never>?
 
     init(cameraService: CameraServicing = CameraService(), mediaStorage: MediaStoring = MediaStorageService()) {
         self.cameraService = cameraService
         self.mediaStorage = mediaStorage
         self.session = cameraService.session
+        motionMonitor.$isStable
+            .assign(to: \.isDeviceStable, on: self)
+            .store(in: &cancellables)
     }
 
     func start() async {
@@ -162,6 +184,57 @@ final class CameraViewModel: ObservableObject {
 
     // MARK: - Capture
 
+    /// What the shutter button actually does: cancels an in-flight countdown,
+    /// starts one if a timer duration is selected, or captures immediately.
+    func captureButtonTapped() {
+        if countdownSeconds != nil {
+            cancelCountdown()
+        } else if countdownDuration > 0 {
+            startCountdown(seconds: countdownDuration)
+        } else {
+            capturePhoto()
+        }
+    }
+
+    func startCountdown(seconds: Int) {
+        countdownTask?.cancel()
+        countdownTask = Task { @MainActor in
+            for remaining in stride(from: seconds, through: 1, by: -1) {
+                self.countdownSeconds = remaining
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                if Task.isCancelled {
+                    self.countdownSeconds = nil
+                    return
+                }
+            }
+            self.countdownSeconds = nil
+            self.capturePhoto()
+        }
+    }
+
+    func cancelCountdown() {
+        countdownTask?.cancel()
+        countdownTask = nil
+        countdownSeconds = nil
+    }
+
+    func startIntervalCapture(every seconds: Double) {
+        guard !isIntervalCaptureRunning else { return }
+        isIntervalCaptureRunning = true
+        intervalTask = Task { @MainActor in
+            while !Task.isCancelled {
+                self.capturePhoto()
+                try? await Task.sleep(nanoseconds: UInt64(max(seconds, 1) * 1_000_000_000))
+            }
+        }
+    }
+
+    func stopIntervalCapture() {
+        intervalTask?.cancel()
+        intervalTask = nil
+        isIntervalCaptureRunning = false
+    }
+
     func capturePhoto() {
         guard !isCapturing else { return }
         isCapturing = true
@@ -192,15 +265,128 @@ final class CameraViewModel: ObservableObject {
             isCapturing = false
             return
         }
-        mediaStorage.savePhotoData(data) { [weak self] result in
-            guard let self else { return }
-            self.isCapturing = false
-            switch result {
-            case .success:
-                self.didSavePhoto = true
-            case .failure(let error):
-                self.errorMessage = error.errorDescription
+        let result = await saveAsync(data)
+        isCapturing = false
+        switch result {
+        case .success:
+            didSavePhoto = true
+        case .failure(let error):
+            errorMessage = error.errorDescription
+        }
+    }
+
+    private func saveAsync(_ data: Data) async -> Result<Void, CameraError> {
+        await withCheckedContinuation { continuation in
+            mediaStorage.savePhotoData(data) { result in
+                continuation.resume(returning: result)
             }
         }
+    }
+
+    // MARK: - Multi-frame capture (Phase 4)
+
+    func startMultiFrameCapture(mode: NightCaptureMode, saveOriginalFrames: Bool = false) {
+        guard multiFrameTask == nil else { return }
+        if ProcessInfo.processInfo.thermalState == .critical {
+            errorMessage = "Device is too hot for multi-frame capture right now. Let it cool down and try again."
+            return
+        }
+
+        let settings = MultiFrameCaptureSettings(
+            frameCount: mode.defaultFrameCount,
+            intervalSeconds: mode.defaultIntervalSeconds,
+            algorithm: mode.algorithm,
+            saveOriginalFrames: saveOriginalFrames
+        )
+        multiFrameProgress = (0, settings.frameCount)
+        motionMonitor.start()
+
+        multiFrameTask = Task { @MainActor in
+            do {
+                let result = try await cameraService.captureMultiFrameBurst(settings: settings) { current, total in
+                    Task { @MainActor in
+                        self.multiFrameProgress = (current, total)
+                    }
+                }
+                await handleMultiFrameResult(result)
+            } catch is CancellationError {
+                // User-cancelled; nothing to report.
+            } catch {
+                errorMessage = (error as? CameraError)?.errorDescription ?? error.localizedDescription
+            }
+            motionMonitor.stop()
+            multiFrameProgress = nil
+            multiFrameTask = nil
+        }
+    }
+
+    func cancelMultiFrameCapture() {
+        multiFrameTask?.cancel()
+    }
+
+    private func handleMultiFrameResult(_ result: MultiFrameCaptureResult) async {
+        let info = CapturedPhotoInfo(from: result.stacked)
+        lastMultiFrameCapture = info
+        guard await mediaStorage.requestAddOnlyAuthorization() else {
+            errorMessage = CameraError.permissionDenied.errorDescription
+            return
+        }
+        if case .failure(let error) = await saveAsync(result.stacked.data) {
+            errorMessage = error.errorDescription
+        }
+        for frame in result.originalFrames {
+            _ = await saveAsync(frame.data)
+        }
+    }
+
+    // MARK: - Exposure bracketing (Phase 4)
+
+    func startExposureBracket(frameCount: Int = 3, stepEV: Float = 1.0) {
+        guard bracketTask == nil else { return }
+        let settings = BracketSettings(frameCount: frameCount, exposureStepEV: stepEV)
+        bracketProgress = (0, frameCount)
+
+        bracketTask = Task { @MainActor in
+            do {
+                let frames = try await cameraService.captureExposureBracket(settings: settings) { current, total in
+                    Task { @MainActor in
+                        self.bracketProgress = (current, total)
+                    }
+                }
+                await saveBracketFrames(frames)
+            } catch is CancellationError {
+                // User-cancelled; nothing to report.
+            } catch {
+                errorMessage = (error as? CameraError)?.errorDescription ?? error.localizedDescription
+            }
+            bracketProgress = nil
+            bracketTask = nil
+        }
+    }
+
+    func cancelExposureBracket() {
+        bracketTask?.cancel()
+    }
+
+    private func saveBracketFrames(_ frames: [CapturedPhoto]) async {
+        guard await mediaStorage.requestAddOnlyAuthorization() else {
+            errorMessage = CameraError.permissionDenied.errorDescription
+            return
+        }
+        for frame in frames {
+            _ = await saveAsync(frame.data)
+        }
+        if let last = frames.last {
+            lastCapture = CapturedPhotoInfo(from: last)
+        }
+    }
+
+    /// Call when the camera screen disappears, to stop any in-flight Phase 4
+    /// workflow cleanly rather than leaving it running against a torn-down session.
+    func cancelAllSequenceCapture() {
+        cancelCountdown()
+        stopIntervalCapture()
+        cancelMultiFrameCapture()
+        cancelExposureBracket()
     }
 }

@@ -1,8 +1,14 @@
 import SwiftUI
 
+enum ActivePanel: Equatable {
+    case none
+    case manual
+    case night
+}
+
 struct CameraView: View {
     @ObservedObject var viewModel: CameraViewModel
-    @State private var isManualPanelVisible = false
+    @State private var activePanel: ActivePanel = .none
 
     var body: some View {
         ZStack {
@@ -13,7 +19,11 @@ struct CameraView: View {
             }
             .ignoresSafeArea()
 
-            CameraControlsView(viewModel: viewModel, isManualPanelVisible: $isManualPanelVisible)
+            CameraControlsView(viewModel: viewModel, activePanel: $activePanel)
+
+            if let countdown = viewModel.countdownSeconds {
+                countdownOverlay(countdown)
+            }
         }
         .statusBarHidden(true)
         .alert("Camera Error", isPresented: errorBinding) {
@@ -22,8 +32,18 @@ struct CameraView: View {
             Text(viewModel.errorMessage ?? "")
         }
         .onDisappear {
+            viewModel.cancelAllSequenceCapture()
             viewModel.stop()
         }
+    }
+
+    private func countdownOverlay(_ value: Int) -> some View {
+        Text("\(value)")
+            .font(.system(size: 96, weight: .bold, design: .rounded))
+            .foregroundStyle(.white)
+            .shadow(radius: 8)
+            .transition(.scale.combined(with: .opacity))
+            .allowsHitTesting(false)
     }
 
     private var errorBinding: Binding<Bool> {

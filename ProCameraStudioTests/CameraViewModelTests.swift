@@ -131,6 +131,52 @@ final class CameraViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testStartMultiFrameCaptureSavesStackedResult() async {
+        let cameraService = MockCameraService(authorized: true)
+        let mediaStorage = MockMediaStorage(authorized: true)
+        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: mediaStorage)
+        await viewModel.start()
+
+        viewModel.startMultiFrameCapture(mode: .noiseReduction)
+
+        let done = await waitUntil { viewModel.lastMultiFrameCapture != nil }
+        XCTAssertTrue(done)
+        XCTAssertEqual(mediaStorage.savedDataHistory.count, 1)
+        XCTAssertEqual(viewModel.lastMultiFrameCapture?.width, 4032)
+    }
+
+    @MainActor
+    func testStartExposureBracketSavesAllFrames() async {
+        let cameraService = MockCameraService(authorized: true)
+        cameraService.bracketResult = .success([
+            CapturedPhoto(data: Data([0x10]), isRaw: false, width: 100, height: 100, fileSizeBytes: 1, requestedFormat: .processed, iso: nil, exposureTimeSeconds: nil, fNumber: nil),
+            CapturedPhoto(data: Data([0x11]), isRaw: false, width: 100, height: 100, fileSizeBytes: 1, requestedFormat: .processed, iso: nil, exposureTimeSeconds: nil, fNumber: nil),
+            CapturedPhoto(data: Data([0x12]), isRaw: false, width: 100, height: 100, fileSizeBytes: 1, requestedFormat: .processed, iso: nil, exposureTimeSeconds: nil, fNumber: nil)
+        ])
+        let mediaStorage = MockMediaStorage(authorized: true)
+        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: mediaStorage)
+        await viewModel.start()
+
+        viewModel.startExposureBracket()
+
+        let done = await waitUntil { mediaStorage.savedDataHistory.count == 3 }
+        XCTAssertTrue(done)
+    }
+
+    @MainActor
+    func testCaptureButtonTappedWithNoTimerCapturesImmediately() async {
+        let cameraService = MockCameraService(authorized: true)
+        let mediaStorage = MockMediaStorage(authorized: true)
+        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: mediaStorage)
+        await viewModel.start()
+
+        viewModel.captureButtonTapped()
+
+        let didSave = await waitUntil { viewModel.didSavePhoto }
+        XCTAssertTrue(didSave)
+    }
+
+    @MainActor
     private func waitUntil(timeout: TimeInterval = 1.0, condition: () -> Bool) async -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {

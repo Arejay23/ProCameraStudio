@@ -24,4 +24,15 @@ protocol CameraServicing: AnyObject {
     /// actually captured (AVCapturePhoto.isRawPhoto is the ground truth), never
     /// claiming RAW/ProRAW succeeded when the device silently returned processed.
     func capturePhoto(completion: @escaping (Result<CapturedPhoto, CameraError>) -> Void)
+
+    /// Captures `settings.frameCount` frames (always .processed — RAW/ProRAW
+    /// bursts are impractically large for this), stacking them via FrameStacker
+    /// as each one arrives rather than holding every frame in memory at once.
+    /// Cooperative cancellation via Task.checkCancellation() between frames.
+    func captureMultiFrameBurst(settings: MultiFrameCaptureSettings, progress: @escaping (Int, Int) -> Void) async throws -> MultiFrameCaptureResult
+
+    /// Captures `settings.frameCount` frames at different exposure-bias offsets
+    /// centered on whatever bias is currently active, restoring it afterward.
+    /// Each frame is returned individually — not merged.
+    func captureExposureBracket(settings: BracketSettings, progress: @escaping (Int, Int) -> Void) async throws -> [CapturedPhoto]
 }

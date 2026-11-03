@@ -90,7 +90,38 @@ never sits in `@Published` state) keep the large-payload and display concerns se
 Photos path as processed photos, confirming Phase 1's gap-fix #3 (`MediaStoring` as the one
 Photos I/O boundary) was the right call. Test target grew from 7 to 9 tests.
 
-*(Phases 4–9 unchanged from the original roadmap — see the full phase prompts already
+A real crash shipped with this phase and was only caught by physical-device testing:
+`AVCapturePhotoOutput.setMaxPhotoDimensions` was being called from inside `setVideoInput`,
+which also runs on the very first `configureSession` pass — before `photoOutput` had ever been
+added to the session. The mocked unit tests never exercised the real `CameraService` code path,
+so `BUILD SUCCEEDED` and `TEST SUCCEEDED` both looked clean while the app crashed on launch on
+an actual iPhone. Fixed by only calling it once `photoOutput` is actually connected (confirming
+convention #5: Simulator/mocks cannot substitute for physical-device testing).
+
+## Phase 4 — Night photography and long exposure (implemented)
+
+Delivered: `NightCaptureMode` (noise reduction / long exposure / star trails) over just two real
+algorithms in `FrameStacker` — `.average` (Core Image `CIColorMatrix` + `CIAdditionCompositing`,
+a running weighted average) and `.maximum` (`CIMaximumCompositing`, for star trails) — merging
+frames via CIImage's lazy filter graph so memory stays close to one frame's size rather than
+holding every frame at once. `CameraServicing` grew two `async throws` methods —
+`captureMultiFrameBurst` and `captureExposureBracket` — the first new async surface in the
+protocol; every other method stays completion-handler-based for consistency with existing call
+sites, a deliberate exception because these two are genuinely sequenced, cancellable,
+multi-step operations where Swift concurrency is the clearer tool, not inconsistency for its
+own sake. Both are cooperatively cancellable via `Task.checkCancellation()` between frames.
+Exposure bracketing captures real distinct sensor exposures (via `setExposureTargetBias` with
+its own completion handler, awaited before each frame so the bias has actually taken effect)
+and saves each frame individually rather than merging — HDR merging is Phase 6's job.
+`MotionMonitor` (CoreMotion) gives "tripod-friendly controls" a real, working, modest
+implementation — a stability warning during capture — rather than full Vision-framework frame
+alignment, which this phase explicitly doesn't attempt (documented, not silently skipped).
+Timed/interval capture (`countdownDuration`, `startIntervalCapture`) are plain ViewModel state,
+not `CaptureConfiguration` fields, since they're capture *workflow* behavior, not continuous
+device settings — Phase 4 is the first phase to introduce "capture workflows" as a concept
+distinct from "capture configuration." Test target grew from 9 to 12 tests.
+
+*(Phases 5–9 unchanged from the original roadmap — see the full phase prompts already
 reviewed with the user. Each should: extend `CaptureConfiguration`/`CameraServicing` rather
 than replace them, route Photos I/O through `MediaStoring`, add tests for new logic, and
 assume physical-device-only testing.)*
