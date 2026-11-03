@@ -8,8 +8,12 @@ protocol CameraServicing: AnyObject {
     var activeConfiguration: CaptureConfiguration { get }
     var activeDeviceName: String { get }
     var capabilities: CameraCapabilities { get }
+    var videoCapabilities: VideoCapabilities { get }
+    var isRecording: Bool { get }
+    var currentRecordingFileSizeBytes: Int { get }
 
     func requestCameraAuthorization() async -> Bool
+    func requestMicrophoneAuthorization() async -> Bool
     func configureSession(with configuration: CaptureConfiguration) throws -> CaptureConfiguration
     func startSession()
     func stopSession()
@@ -35,4 +39,13 @@ protocol CameraServicing: AnyObject {
     /// centered on whatever bias is currently active, restoring it afterward.
     /// Each frame is returned individually — not merged.
     func captureExposureBracket(settings: BracketSettings, progress: @escaping (Int, Int) -> Void) async throws -> [CapturedPhoto]
+
+    /// Starts recording to a temp file. Throws without starting if not in
+    /// video mode, already recording, storage is critically low, or the
+    /// device is thermally critical — never silently starts a doomed recording.
+    func startRecording() throws
+
+    /// Finalizes the current recording. Reports back the actual resolution and
+    /// whether ProRes was really used, not just what was requested.
+    func stopRecording(completion: @escaping (Result<RecordedVideo, CameraError>) -> Void)
 }

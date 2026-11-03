@@ -24,8 +24,10 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>ProCamera Studio needs camera access so you can compose and capture photos.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>ProCamera Studio needs microphone access to record audio with your videos.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>ProCamera Studio saves the photos you capture to your Photos library.</string>
+	<string>ProCamera Studio saves the photos and videos you capture to your Photos library.</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UILaunchScreen</key>

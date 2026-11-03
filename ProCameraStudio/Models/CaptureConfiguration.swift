@@ -33,6 +33,11 @@ struct CaptureConfiguration: Equatable {
     var lensType: LensType = .wide
     var photoFormat: PhotoFormat = .processed
 
+    var captureMode: CaptureMode = .photo
+    var videoResolution: VideoResolution = .hd1080p
+    var videoFrameRate: Double = 30
+    var useProResVideo: Bool = false
+
     // If either is non-nil, exposure mode is .custom.
     var manualISO: Float?
     var manualExposureDuration: CMTime?

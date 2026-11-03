@@ -5,6 +5,10 @@ import Photos
 protocol MediaStoring: AnyObject {
     func requestAddOnlyAuthorization() async -> Bool
     func savePhotoData(_ data: Data, completion: @escaping (Result<Void, CameraError>) -> Void)
+
+    /// Videos are written to a file by AVCaptureMovieFileOutput, not held as
+    /// in-memory Data (they're far too large), so saving takes a file URL.
+    func saveVideo(at url: URL, completion: @escaping (Result<Void, CameraError>) -> Void)
 }
 
 final class MediaStorageService: MediaStoring {
@@ -25,6 +29,21 @@ final class MediaStorageService: MediaStoring {
         PHPhotoLibrary.shared().performChanges({
             let request = PHAssetCreationRequest.forAsset()
             request.addResource(with: .photo, data: data, options: nil)
+        }, completionHandler: { success, error in
+            DispatchQueue.main.async {
+                if success {
+                    completion(.success(()))
+                } else {
+                    completion(.failure(.saveFailed(error?.localizedDescription ?? "Unknown error")))
+                }
+            }
+        })
+    }
+
+    func saveVideo(at url: URL, completion: @escaping (Result<Void, CameraError>) -> Void) {
+        PHPhotoLibrary.shared().performChanges({
+            let request = PHAssetCreationRequest.forAsset()
+            request.addResource(with: .video, fileURL: url, options: nil)
         }, completionHandler: { success, error in
             DispatchQueue.main.async {
                 if success {

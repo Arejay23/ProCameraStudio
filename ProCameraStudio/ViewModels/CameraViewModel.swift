@@ -32,6 +32,13 @@ final class CameraViewModel: ObservableObject {
     @Published private(set) var bracketProgress: (current: Int, total: Int)?
     @Published private(set) var isDeviceStable = true
 
+    // Phase 5: video recording.
+    @Published private(set) var videoCapabilities = VideoCapabilities.fallback
+    @Published private(set) var isRecording = false
+    @Published private(set) var recordingDuration: TimeInterval = 0
+    @Published private(set) var recordingFileSizeBytes = 0
+    @Published private(set) var lastRecordedVideo: RecordedVideoInfo?
+
     nonisolated let session: AVCaptureSession
     private let cameraService: CameraServicing
     private let mediaStorage: MediaStoring
@@ -42,6 +49,8 @@ final class CameraViewModel: ObservableObject {
     private var intervalTask: Task<Void, Never>?
     private var multiFrameTask: Task<Void, Never>?
     private var bracketTask: Task<Void, Never>?
+    private var recordingTimerTask: Task<Void, Never>?
+    private var recordingStartDate: Date?
 
     init(cameraService: CameraServicing = CameraService(), mediaStorage: MediaStoring = MediaStorageService()) {
         self.cameraService = cameraService
@@ -65,6 +74,7 @@ final class CameraViewModel: ObservableObject {
             isSessionRunning = true
             activeDeviceName = cameraService.activeDeviceName
             capabilities = cameraService.capabilities
+            videoCapabilities = cameraService.videoCapabilities
         } catch {
             errorMessage = (error as? CameraError)?.errorDescription ?? error.localizedDescription
         }
@@ -87,6 +97,36 @@ final class CameraViewModel: ObservableObject {
 
     func selectPhotoFormat(_ format: PhotoFormat) {
         apply { $0.photoFormat = format }
+    }
+
+    // MARK: - Photo/video mode (Phase 5)
+
+    func switchToVideoMode() async {
+        guard await cameraService.requestMicrophoneAuthorization() else {
+            errorMessage = "Microphone access is required to record video. Enable it in Settings."
+            return
+        }
+        apply { $0.captureMode = .video }
+    }
+
+    func switchToPhotoMode() {
+        guard !isRecording else { return }
+        apply { $0.captureMode = .photo }
+    }
+
+    func selectVideoResolution(_ resolution: VideoResolution) {
+        guard !isRecording else { return }
+        apply { $0.videoResolution = resolution }
+    }
+
+    func selectVideoFrameRate(_ frameRate: Double) {
+        guard !isRecording else { return }
+        apply { $0.videoFrameRate = frameRate }
+    }
+
+    func toggleProResVideo(_ enabled: Bool) {
+        guard !isRecording else { return }
+        apply { $0.useProResVideo = enabled }
     }
 
     // MARK: - Manual controls
@@ -176,6 +216,7 @@ final class CameraViewModel: ObservableObject {
                 self.configuration = normalized
                 self.activeDeviceName = self.cameraService.activeDeviceName
                 self.capabilities = self.cameraService.capabilities
+                self.videoCapabilities = self.cameraService.videoCapabilities
             case .failure(let error):
                 self.errorMessage = error.errorDescription
             }
@@ -388,5 +429,99 @@ final class CameraViewModel: ObservableObject {
         stopIntervalCapture()
         cancelMultiFrameCapture()
         cancelExposureBracket()
+        if isRecording {
+            stopRecording()
+        }
+    }
+
+    // MARK: - Video recording (Phase 5)
+
+    func startRecording() {
+        guard !isRecording else { return }
+        do {
+            try cameraService.startRecording()
+            isRecording = true
+            recordingStartDate = Date()
+            recordingDuration = 0
+            recordingFileSizeBytes = 0
+            startRecordingTimer()
+        } catch {
+            errorMessage = (error as? CameraError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    func stopRecording() {
+        guard isRecording else { return }
+        recordingTimerTask?.cancel()
+        recordingTimerTask = nil
+
+        cameraService.stopRecording { [weak self] result in
+            guard let self else { return }
+            self.isRecording = false
+            switch result {
+            case .success(let recorded):
+                Task { @MainActor in
+                    await self.saveRecordedVideo(recorded)
+                }
+            case .failure(let error):
+                self.errorMessage = error.errorDescription
+            }
+        }
+    }
+
+    private func startRecordingTimer() {
+        recordingTimerTask = Task { @MainActor in
+            while !Task.isCancelled {
+                guard let start = recordingStartDate else { break }
+                recordingDuration = Date().timeIntervalSince(start)
+                recordingFileSizeBytes = cameraService.currentRecordingFileSizeBytes
+
+                if availableStorageIsCritical() {
+                    errorMessage = "Storage is critically low — stopping recording."
+                    stopRecording()
+                    break
+                }
+                if ProcessInfo.processInfo.thermalState == .critical {
+                    errorMessage = "Device is too hot — stopping recording."
+                    stopRecording()
+                    break
+                }
+
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+        }
+    }
+
+    private func availableStorageIsCritical() -> Bool {
+        guard let values = try? URL(fileURLWithPath: NSHomeDirectory())
+            .resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]),
+            let capacity = values.volumeAvailableCapacityForImportantUsage else {
+            return false
+        }
+        return capacity < 100 * 1024 * 1024
+    }
+
+    private func saveRecordedVideo(_ recorded: RecordedVideo) async {
+        let info = RecordedVideoInfo(from: recorded)
+        lastRecordedVideo = info
+        guard await mediaStorage.requestAddOnlyAuthorization() else {
+            errorMessage = CameraError.permissionDenied.errorDescription
+            return
+        }
+        let result = await withCheckedContinuation { (continuation: CheckedContinuation<Result<Void, CameraError>, Never>) in
+            mediaStorage.saveVideo(at: recorded.url) { continuation.resume(returning: $0) }
+        }
+        switch result {
+        case .success:
+            try? FileManager.default.removeItem(at: recorded.url)
+        case .failure(let error):
+            // Leave the temp file in place on failure rather than discarding
+            // the only copy of a recording the user just made.
+            errorMessage = error.errorDescription
+        }
+        try? await Task.sleep(nanoseconds: 4_000_000_000)
+        if lastRecordedVideo == info {
+            lastRecordedVideo = nil
+        }
     }
 }

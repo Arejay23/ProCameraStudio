@@ -177,6 +177,51 @@ final class CameraViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testSwitchToVideoModeRequestsMicrophoneAndUpdatesConfiguration() async {
+        let cameraService = MockCameraService(authorized: true)
+        cameraService.micAuthorized = true
+        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: MockMediaStorage(authorized: true))
+        await viewModel.start()
+
+        await viewModel.switchToVideoMode()
+
+        XCTAssertEqual(viewModel.configuration.captureMode, .video)
+        XCTAssertEqual(cameraService.activeConfiguration.captureMode, .video)
+    }
+
+    @MainActor
+    func testSwitchToVideoModeWithDeniedMicrophoneStaysInPhotoMode() async {
+        let cameraService = MockCameraService(authorized: true)
+        cameraService.micAuthorized = false
+        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: MockMediaStorage(authorized: true))
+        await viewModel.start()
+
+        await viewModel.switchToVideoMode()
+
+        XCTAssertEqual(viewModel.configuration.captureMode, .photo)
+        XCTAssertNotNil(viewModel.errorMessage)
+    }
+
+    @MainActor
+    func testStartAndStopRecordingSavesVideo() async {
+        let cameraService = MockCameraService(authorized: true)
+        let mediaStorage = MockMediaStorage(authorized: true)
+        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: mediaStorage)
+        await viewModel.start()
+        await viewModel.switchToVideoMode()
+
+        viewModel.startRecording()
+        XCTAssertTrue(viewModel.isRecording)
+
+        viewModel.stopRecording()
+
+        let done = await waitUntil { viewModel.lastRecordedVideo != nil }
+        XCTAssertTrue(done)
+        XCTAssertFalse(viewModel.isRecording)
+        XCTAssertNotNil(mediaStorage.savedVideoURL)
+    }
+
+    @MainActor
     private func waitUntil(timeout: TimeInterval = 1.0, condition: () -> Bool) async -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {

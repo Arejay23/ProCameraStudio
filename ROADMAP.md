@@ -121,7 +121,34 @@ not `CaptureConfiguration` fields, since they're capture *workflow* behavior, no
 device settings — Phase 4 is the first phase to introduce "capture workflows" as a concept
 distinct from "capture configuration." Test target grew from 9 to 12 tests.
 
-*(Phases 5–9 unchanged from the original roadmap — see the full phase prompts already
+## Phase 5 — Professional video recording (implemented)
+
+Delivered: `CaptureMode` (photo/video) joins `position`/`lensType` in `CaptureConfiguration`,
+since it changes session topology the same way they do — switching modes
+removes/adds `photoOutput` vs. `movieFileOutput` + a microphone `AVCaptureDeviceInput`, and
+sets the session preset accordingly, all gated by `!movieFileOutput.isRecording` so settings
+can't change out from under an active recording. Resolution (`VideoResolution`) and frame rate
+are discovered live — `session.canSetSessionPreset(_:)` for resolution,
+`device.activeFormat.videoSupportedFrameRateRanges` for frame rate — never assumed. ProRes
+support is read from `AVCaptureMovieFileOutput.availableVideoCodecTypes`, the same
+"trust AVFoundation's own live answer" discipline used for RAW in Phase 3, rather than trying to
+reconstruct Apple's undocumented device/format gating logic. Recording uses
+`AVCaptureMovieFileOutput` + `AVCaptureFileOutputRecordingDelegate`
+(`VideoRecordingProcessor`), not `AVAssetWriter` — simpler, Apple-recommended for "record to a
+file" without live per-frame processing, which this phase explicitly doesn't need.
+
+Manual exposure/ISO/shutter/white-balance from Phase 2 needed zero video-specific code — they're
+device-level state applied continuously regardless of which output is consuming frames, so they
+already applied to video the moment `movieFileOutput` was connected. Recording duration and file
+size are read from the real file on disk once a second, not estimated. Interruptions
+(`AVCaptureSession.wasInterruptedNotification`) and a critical thermal/storage state both stop
+an active recording rather than letting it corrupt or crash; `AVErrorRecordingSuccessfullyFinishedKey`
+is checked so an interruption-triggered stop isn't misreported as a failure. `RecordedVideo`
+(service-layer, carries a file `URL`) and `RecordedVideoInfo` (`Equatable`, UI-facing) follow the
+same split established by `CapturedPhoto`/`CapturedPhotoInfo` in Phase 3. Test target grew from
+12 to 15 tests.
+
+*(Phases 6–9 unchanged from the original roadmap — see the full phase prompts already
 reviewed with the user. Each should: extend `CaptureConfiguration`/`CameraServicing` rather
 than replace them, route Photos I/O through `MediaStoring`, add tests for new logic, and
 assume physical-device-only testing.)*

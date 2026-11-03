@@ -95,12 +95,42 @@ final class MockCameraService: CameraServicing {
         case .failure(let error): throw error
         }
     }
+
+    var videoCapabilities = VideoCapabilities(
+        availableResolutions: [.hd1080p, .uhd4K],
+        availableFrameRates: [24, 30, 60],
+        supportsProRes: true
+    )
+    private(set) var isRecording = false
+    var currentRecordingFileSizeBytes = 0
+    var micAuthorized = true
+    var recordedVideoResult: Result<RecordedVideo, CameraError> = .success(
+        RecordedVideo(
+            url: FileManager.default.temporaryDirectory.appendingPathComponent("mock.mov"),
+            duration: 5.5,
+            fileSizeBytes: 12_000_000,
+            resolution: .hd1080p,
+            usedProRes: false
+        )
+    )
+
+    func requestMicrophoneAuthorization() async -> Bool { micAuthorized }
+
+    func startRecording() throws {
+        isRecording = true
+    }
+
+    func stopRecording(completion: @escaping (Result<RecordedVideo, CameraError>) -> Void) {
+        isRecording = false
+        completion(recordedVideoResult)
+    }
 }
 
 final class MockMediaStorage: MediaStoring {
     private let authorized: Bool
     private(set) var savedData: Data?
     private(set) var savedDataHistory: [Data] = []
+    private(set) var savedVideoURL: URL?
 
     init(authorized: Bool) {
         self.authorized = authorized
@@ -111,6 +141,11 @@ final class MockMediaStorage: MediaStoring {
     func savePhotoData(_ data: Data, completion: @escaping (Result<Void, CameraError>) -> Void) {
         savedData = data
         savedDataHistory.append(data)
+        completion(.success(()))
+    }
+
+    func saveVideo(at url: URL, completion: @escaping (Result<Void, CameraError>) -> Void) {
+        savedVideoURL = url
         completion(.success(()))
     }
 }

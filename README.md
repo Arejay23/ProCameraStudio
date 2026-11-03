@@ -1,4 +1,4 @@
-# ProCamera Studio — Phase 1, 2, 3 & 4
+# ProCamera Studio — Phase 1–5
 
 ## Prerequisites (install these before building)
 
@@ -32,6 +32,7 @@ xcodegen generate
    Settings → General → VPN & Device Management → tap your developer certificate → **Trust**.
    Relaunch from the Home Screen or from Xcode.
 7. Grant camera access when prompted. Grant "Add Photos Only" access when you tap capture.
+   Switching to Video mode for the first time prompts for microphone access separately.
 
 ## Build/test checklist
 
@@ -42,7 +43,7 @@ xcodegen generate
 - [ ] Switch-camera button flips to front camera and back
 - [ ] Capture button saves a photo and it appears in Photos
 - [ ] Backgrounding the app and returning keeps the preview running
-- [ ] `⌘U` in Xcode runs the `ProCameraStudioTests` target and all twelve tests pass
+- [ ] `⌘U` in Xcode runs the `ProCameraStudioTests` target and all fifteen tests pass
 - [ ] Tapping the slider icon (top-right) shows/hides the manual controls panel
 - [ ] Dragging the ISO/Shutter/EV/Focus/White Balance sliders shows an "Auto" button and an
       orange highlight while a manual value is active
@@ -74,11 +75,27 @@ xcodegen generate
       "Stop Interval Capture"
 - [ ] Backgrounding the app (or leaving the camera screen) while any Phase 4 sequence is running
       cancels it cleanly instead of continuing against a torn-down session
+- [ ] Tapping "Video" in the mode picker (top) prompts for microphone access the first time,
+      then switches to a video preview; "Photo" switches back
+- [ ] The record button (red circle) starts recording — it turns into a red square, and a
+      duration/file-size HUD appears at the top ("00:07 · 12 MB") and counts up live
+- [ ] Tapping the gear icon (top-right, video mode only) shows resolution (1080p/4K) and frame
+      rate (24/30/60) pickers; both are disabled while actively recording
+- [ ] If your specific device/format combination supports it, a ProRes toggle appears in that
+      same panel — otherwise it's correctly absent rather than shown and failing
+- [ ] Stopping a recording saves it to Photos and shows a banner with actual resolution,
+      duration, and file size that fades out after ~4 seconds
+- [ ] Manual ISO/shutter/focus/white-balance from the Manual panel still work while in video mode
+      and visibly affect the live preview during recording
+- [ ] Switching camera (front/back) and changing format/resolution/mode controls are all disabled
+      while actively recording (shown dimmed), rather than allowed and silently failing
+- [ ] Backgrounding the app or leaving the camera screen while recording stops and saves the
+      recording rather than losing it or leaving the session in a broken state
+- [ ] An incoming phone call during recording stops the recording gracefully (file still saves)
 
-## Known limitations (Phase 1–4)
+## Known limitations (Phase 1–5)
 
 - Portrait orientation only — landscape is not yet handled.
-- No video (Phase 5).
 - No flash/torch or pinch-to-zoom control yet.
 - No live exposure histogram. The original Phase 2 brief allowed skipping this "if feasible
   without destabilizing the camera pipeline" — a real-time histogram needs a continuous
@@ -157,6 +174,42 @@ for "night mode" marketing language to blur this:
 - **A critical thermal state blocks starting a new stacking capture** (checked once, at the
   start) rather than letting a long burst run while the phone is already overheating.
 
+## Video recording notes (Phase 5)
+
+- **`AVCaptureMovieFileOutput`, not `AVAssetWriter`.** The roadmap allowed either; movie file
+  output is the simpler, Apple-recommended path for "record to a file," handles muxing/writing
+  robustly on its own, and still supports ProRes codec selection — `AVAssetWriter` would only
+  be needed for live per-frame processing during recording, which this phase explicitly doesn't
+  do (no color grading/editing yet — that's later).
+- **Resolution and frame rate are discovered live, not assumed.** 1080p/4K only appear in the
+  picker if `session.canSetSessionPreset(_:)` confirms the device actually supports them right
+  now; 24/30/60 fps only appear if `device.activeFormat.videoSupportedFrameRateRanges` confirms
+  the current resolution supports that rate.
+- **ProRes is detected the same way — `AVCaptureMovieFileOutput.availableVideoCodecTypes`
+  reported live by the connected output** — rather than guessing which iPhone 14 Pro
+  configurations support it. This list is only meaningful once already in video mode (the
+  output needs to be connected first), so the ProRes toggle can't be previewed before switching
+  modes. If it's not in that list, the toggle doesn't appear — recording never silently
+  downgrades and calls itself ProRes.
+- **Manual exposure/ISO/shutter/white-balance need no video-specific code at all.** They're
+  device-level state from Phase 2, applied continuously regardless of which output (photo or
+  movie) is currently consuming frames — confirmation that keeping those as device state instead
+  of photo-specific settings was the right call back in Phase 2.
+- **Recording duration and file size are read from the real file on disk** (`FileManager`
+  polling once a second), not estimated from bitrate — the HUD shows what's actually been
+  written, not a guess.
+- **Interruptions stop recording, they don't corrupt it.** `AVCaptureSession
+  .wasInterruptedNotification` (phone calls, another app taking the camera, etc.) triggers
+  `movieFileOutput.stopRecording()`, and `AVErrorRecordingSuccessfullyFinishedKey` is checked
+  before treating an interruption-triggered stop as a failure — the file this produces is
+  still valid and gets saved normally.
+- **Storage and thermal state are checked both before and during recording** — refused upfront
+  if already critical, and recording auto-stops if either crosses a critical threshold mid-
+  recording, rather than continuing until the OS kills the app outright.
+- **Switching camera, resolution, format, or mode is blocked while recording** (both in the UI,
+  disabled/dimmed, and defensively in `CameraService`, which throws rather than silently
+  reconfiguring the session underneath an active recording).
+
 ## Implications of running a development build on your actual phone
 
 This is not a simulator — code you run here touches your real device, your real Photos
@@ -175,12 +228,13 @@ library, and (for signing) your real Apple ID.
 4. **Real writes to your Photos library.** Every successful capture lands a genuine asset in
    your actual camera roll (and syncs to iCloud Photos if you have that on) — not a sandbox.
    Test shots will show up in your library; periodically delete the obvious test photos.
-5. **Add-only Photos permission, camera-only otherwise.** This build requests camera access
-   and "Add Photos Only" (it cannot browse or read your existing library). No microphone, no
-   network access of any kind is requested in Phase 1.
-6. **Storage grows fast in later phases.** Phase 1 photos are normal JPEG/HEIC size, but once
-   Phase 3 (ProRAW, ~75–110 MB/photo) and Phase 5 (ProRes video, multiple GB/minute) land,
-   watch free storage on the phone before long test sessions.
+5. **Add-only Photos permission; camera and (since Phase 5) microphone otherwise.** This build
+   requests camera access, microphone access (only once you switch to Video mode), and "Add
+   Photos Only" (it cannot browse or read your existing library). No network access of any
+   kind is requested anywhere in this app.
+6. **Storage grows fast with RAW and video.** Phase 1 photos are normal JPEG/HEIC size, but
+   ProRAW (~75–110 MB/photo) and especially ProRes video (multiple GB/minute at 4K) can fill
+   a phone's storage in minutes — watch free space before long test sessions.
 7. **Battery and thermal load.** A live camera session is power-hungry; extended sessions can
    trigger iOS thermal throttling, which may reduce preview frame rate or temporarily disable
    some camera features. That's the OS protecting the device, not an app bug.

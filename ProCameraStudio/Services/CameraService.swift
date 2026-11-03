@@ -7,11 +7,52 @@ final class CameraService: NSObject, CameraServicing {
     private(set) var activeConfiguration = CaptureConfiguration()
     private let sessionQueue = DispatchQueue(label: "com.procamerastudio.sessionQueue")
     private let photoOutput = AVCapturePhotoOutput()
+    private let movieFileOutput = AVCaptureMovieFileOutput()
     private var videoDeviceInput: AVCaptureDeviceInput?
+    private var audioDeviceInput: AVCaptureDeviceInput?
     private var activeCaptures: [PhotoCaptureProcessor] = []
+    private var currentRecordingURL: URL?
+    private var videoRecordingProcessor: VideoRecordingProcessor?
+    private var interruptionObserver: NSObjectProtocol?
+
+    private static let minimumFreeBytesToStartRecording: Int64 = 200 * 1024 * 1024
+
+    override init() {
+        super.init()
+        observeInterruptions()
+    }
+
+    deinit {
+        if let interruptionObserver {
+            NotificationCenter.default.removeObserver(interruptionObserver)
+        }
+    }
 
     var activeDeviceName: String {
         videoDeviceInput?.device.localizedName ?? "No Camera"
+    }
+
+    var isRecording: Bool {
+        movieFileOutput.isRecording
+    }
+
+    var currentRecordingFileSizeBytes: Int {
+        guard let url = currentRecordingURL else { return 0 }
+        return (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+    }
+
+    var videoCapabilities: VideoCapabilities {
+        guard let device = videoDeviceInput?.device else { return .fallback }
+        let availableResolutions = VideoResolution.allCases.filter { session.canSetSessionPreset($0.sessionPreset) }
+        let candidateFrameRates: [Double] = [24, 30, 60]
+        let availableFrameRates = candidateFrameRates.filter { rate in
+            device.activeFormat.videoSupportedFrameRateRanges.contains { rate >= $0.minFrameRate && rate <= $0.maxFrameRate }
+        }
+        return VideoCapabilities(
+            availableResolutions: availableResolutions,
+            availableFrameRates: availableFrameRates.isEmpty ? [30] : availableFrameRates,
+            supportsProRes: movieFileOutput.availableVideoCodecTypes.contains(.proRes422)
+        )
     }
 
     var capabilities: CameraCapabilities {
@@ -39,6 +80,17 @@ final class CameraService: NSObject, CameraServicing {
             return true
         case .notDetermined:
             return await AVCaptureDevice.requestAccess(for: .video)
+        default:
+            return false
+        }
+    }
+
+    func requestMicrophoneAuthorization() async -> Bool {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            return true
+        case .notDetermined:
+            return await AVCaptureDevice.requestAccess(for: .audio)
         default:
             return false
         }
@@ -80,8 +132,26 @@ final class CameraService: NSObject, CameraServicing {
         sessionQueue.async { [weak self] in
             guard let self else { return }
             do {
+                guard !self.movieFileOutput.isRecording else {
+                    throw CameraError.configurationFailed("Can't change settings while recording.")
+                }
+
                 let needsDeviceSwap = configuration.position != self.activeConfiguration.position
                     || configuration.lensType != self.activeConfiguration.lensType
+                let needsVideoReconfig = configuration.captureMode == .video && (
+                    self.activeConfiguration.captureMode != .video
+                    || configuration.videoResolution != self.activeConfiguration.videoResolution
+                    || configuration.videoFrameRate != self.activeConfiguration.videoFrameRate
+                )
+                let needsPhotoReconfig = configuration.captureMode == .photo && self.activeConfiguration.captureMode != .photo
+
+                if needsVideoReconfig {
+                    try self.configureVideoMode(resolution: configuration.videoResolution, frameRate: configuration.videoFrameRate)
+                    self.activeConfiguration.captureMode = .video
+                } else if needsPhotoReconfig {
+                    try self.configurePhotoMode()
+                    self.activeConfiguration.captureMode = .photo
+                }
 
                 if needsDeviceSwap {
                     self.session.beginConfiguration()
@@ -89,7 +159,9 @@ final class CameraService: NSObject, CameraServicing {
                     try self.setVideoInput(for: configuration.position, lensType: configuration.lensType)
                     // photoOutput is already connected (added once, in configureSession)
                     // so this is safe here, unlike the first-ever setup.
-                    self.updateMaxPhotoDimensions()
+                    if self.activeConfiguration.captureMode == .photo {
+                        self.updateMaxPhotoDimensions()
+                    }
                 }
 
                 guard let device = self.videoDeviceInput?.device else {
@@ -98,8 +170,12 @@ final class CameraService: NSObject, CameraServicing {
                 var requested = configuration
                 requested.position = self.activeConfiguration.position
                 requested.lensType = self.activeConfiguration.lensType
+                requested.captureMode = self.activeConfiguration.captureMode
+                requested.videoResolution = self.activeConfiguration.videoResolution
+                requested.videoFrameRate = self.activeConfiguration.videoFrameRate
                 var applied = try self.applyManualSettings(requested, to: device)
                 self.validatePhotoFormat(&applied)
+                self.validateVideoSettings(&applied)
                 self.activeConfiguration = applied
 
                 let result = self.activeConfiguration
@@ -131,6 +207,10 @@ final class CameraService: NSObject, CameraServicing {
 
             guard self.session.isRunning else {
                 DispatchQueue.main.async { completion(.failure(.captureFailed("Camera session is not running"))) }
+                return
+            }
+            guard self.session.outputs.contains(self.photoOutput) else {
+                DispatchQueue.main.async { completion(.failure(.captureFailed("Switch to photo mode before capturing a photo."))) }
                 return
             }
 
@@ -213,6 +293,154 @@ final class CameraService: NSObject, CameraServicing {
                 configuration.photoFormat = .processed
             }
         }
+    }
+
+    // MARK: - Photo/video mode (Phase 5)
+
+    private func configurePhotoMode() throws {
+        session.beginConfiguration()
+        defer { session.commitConfiguration() }
+
+        if session.outputs.contains(movieFileOutput) {
+            session.removeOutput(movieFileOutput)
+        }
+        if let audioDeviceInput {
+            session.removeInput(audioDeviceInput)
+            self.audioDeviceInput = nil
+        }
+        if session.canSetSessionPreset(.photo) {
+            session.sessionPreset = .photo
+        }
+        if !session.outputs.contains(photoOutput), session.canAddOutput(photoOutput) {
+            session.addOutput(photoOutput)
+        }
+        updateMaxPhotoDimensions()
+    }
+
+    private func configureVideoMode(resolution: VideoResolution, frameRate: Double) throws {
+        session.beginConfiguration()
+        do {
+            if session.outputs.contains(photoOutput) {
+                session.removeOutput(photoOutput)
+            }
+            if audioDeviceInput == nil, let audioDevice = AVCaptureDevice.default(for: .audio) {
+                let input = try AVCaptureDeviceInput(device: audioDevice)
+                if session.canAddInput(input) {
+                    session.addInput(input)
+                    audioDeviceInput = input
+                }
+            }
+            let preset = resolution.sessionPreset
+            if session.canSetSessionPreset(preset) {
+                session.sessionPreset = preset
+            }
+            if !session.outputs.contains(movieFileOutput), session.canAddOutput(movieFileOutput) {
+                session.addOutput(movieFileOutput)
+            }
+        } catch {
+            session.commitConfiguration()
+            throw error
+        }
+        session.commitConfiguration()
+
+        try applyFrameRate(frameRate)
+        activeConfiguration.videoResolution = resolution
+        activeConfiguration.videoFrameRate = frameRate
+    }
+
+    private func applyFrameRate(_ frameRate: Double) throws {
+        guard let device = videoDeviceInput?.device else { return }
+        let supported = device.activeFormat.videoSupportedFrameRateRanges.contains {
+            frameRate >= $0.minFrameRate && frameRate <= $0.maxFrameRate
+        }
+        guard supported else {
+            throw CameraError.configurationFailed("This camera doesn't support \(Int(frameRate)) fps at the selected resolution.")
+        }
+        try device.lockForConfiguration()
+        let duration = CMTimeMake(value: 1, timescale: Int32(frameRate))
+        device.activeVideoMinFrameDuration = duration
+        device.activeVideoMaxFrameDuration = duration
+        device.unlockForConfiguration()
+    }
+
+    /// Resets ProRes/resolution to something actually supported if the
+    /// requested combination isn't — same honesty discipline as validatePhotoFormat.
+    private func validateVideoSettings(_ configuration: inout CaptureConfiguration) {
+        guard configuration.captureMode == .video else { return }
+        if configuration.useProResVideo, !movieFileOutput.availableVideoCodecTypes.contains(.proRes422) {
+            configuration.useProResVideo = false
+        }
+        let caps = videoCapabilities
+        if !caps.availableResolutions.contains(configuration.videoResolution), let first = caps.availableResolutions.first {
+            configuration.videoResolution = first
+        }
+    }
+
+    // MARK: - Recording (Phase 5)
+
+    private func observeInterruptions() {
+        interruptionObserver = NotificationCenter.default.addObserver(
+            forName: AVCaptureSession.wasInterruptedNotification,
+            object: session,
+            queue: nil
+        ) { [weak self] _ in
+            guard let self, self.movieFileOutput.isRecording else { return }
+            self.movieFileOutput.stopRecording()
+        }
+    }
+
+    func startRecording() throws {
+        guard !movieFileOutput.isRecording else {
+            throw CameraError.captureFailed("Already recording.")
+        }
+        guard activeConfiguration.captureMode == .video, session.outputs.contains(movieFileOutput) else {
+            throw CameraError.captureFailed("Switch to video mode before recording.")
+        }
+        guard Self.availableDiskCapacityBytes() > Self.minimumFreeBytesToStartRecording else {
+            throw CameraError.captureFailed("Not enough free storage to start recording.")
+        }
+        guard ProcessInfo.processInfo.thermalState != .critical else {
+            throw CameraError.captureFailed("Device is too hot to record right now. Let it cool down and try again.")
+        }
+
+        let useProRes = activeConfiguration.useProResVideo && movieFileOutput.availableVideoCodecTypes.contains(.proRes422)
+        if let connection = movieFileOutput.connection(with: .video) {
+            let codec: AVVideoCodecType = useProRes ? .proRes422 : .hevc
+            if movieFileOutput.availableVideoCodecTypes.contains(codec) {
+                movieFileOutput.setOutputSettings([AVVideoCodecKey: codec], for: connection)
+            }
+        }
+
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mov")
+        currentRecordingURL = tempURL
+
+        let processor = VideoRecordingProcessor(resolution: activeConfiguration.videoResolution, usedProRes: useProRes)
+        videoRecordingProcessor = processor
+        movieFileOutput.startRecording(to: tempURL, recordingDelegate: processor)
+    }
+
+    func stopRecording(completion: @escaping (Result<RecordedVideo, CameraError>) -> Void) {
+        guard movieFileOutput.isRecording else {
+            completion(.failure(.captureFailed("Not currently recording.")))
+            return
+        }
+        videoRecordingProcessor?.completion = { [weak self] result in
+            self?.currentRecordingURL = nil
+            self?.videoRecordingProcessor = nil
+            DispatchQueue.main.async { completion(result) }
+        }
+        movieFileOutput.stopRecording()
+    }
+
+    private static func availableDiskCapacityBytes() -> Int64 {
+        guard let url = try? FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: false),
+              let values = try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]),
+              let capacity = values.volumeAvailableCapacityForImportantUsage else {
+            return .max
+        }
+        return capacity
     }
 
     private func updateMaxPhotoDimensions() {
@@ -440,6 +668,10 @@ final class CameraService: NSObject, CameraServicing {
                 }
                 guard self.session.isRunning else {
                     continuation.resume(throwing: CameraError.captureFailed("Camera session is not running"))
+                    return
+                }
+                guard self.session.outputs.contains(self.photoOutput) else {
+                    continuation.resume(throwing: CameraError.captureFailed("Switch to photo mode first."))
                     return
                 }
 

@@ -4,6 +4,7 @@ enum ActivePanel: Equatable {
     case none
     case manual
     case night
+    case video
 }
 
 struct CameraView: View {
