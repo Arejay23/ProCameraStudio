@@ -74,9 +74,19 @@ final class MockCameraService: CameraServicing {
         )
     )
 
+    /// When > 0, simulates a slow unbounded capture so tests can cancel
+    /// mid-run and verify stopping finalizes with what's captured so far
+    /// rather than discarding it (cancellation here is cooperative, same as
+    /// the real CameraService — it never throws).
+    var multiFrameBurstDelayNanoseconds: UInt64 = 0
+
     func captureMultiFrameBurst(settings: MultiFrameCaptureSettings, progress: @escaping (Int, Int) -> Void) async throws -> MultiFrameCaptureResult {
         for index in 1...max(settings.frameCount, 1) {
-            progress(index, settings.frameCount)
+            if multiFrameBurstDelayNanoseconds > 0 {
+                try? await Task.sleep(nanoseconds: multiFrameBurstDelayNanoseconds)
+            }
+            if Task.isCancelled { break }
+            progress(index, settings.isUnbounded ? 0 : settings.frameCount)
         }
         switch multiFrameResult {
         case .success(let result): return result

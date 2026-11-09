@@ -406,15 +406,18 @@ final class CameraViewModel: ObservableObject {
         }
 
         let settings = MultiFrameCaptureSettings(
-            frameCount: mode.defaultFrameCount,
+            frameCount: mode.isUnbounded ? mode.maximumUnboundedFrameCount : mode.defaultFrameCount,
             intervalSeconds: mode.defaultIntervalSeconds,
             algorithm: mode.algorithm,
-            // Always true now: originals only ever go to the local library
-            // (never Photos, per the fix above), so there's no real downside
-            // to always keeping them for in-app before/after comparison.
-            saveOriginalFrames: true
+            // Originals only ever go to the local library (never Photos), so
+            // keeping them is safe for a short, bounded burst (Noise
+            // Reduction) — but an unbounded Long Exposure/Star Trails run
+            // could be hundreds of frames, where holding every one in memory
+            // would defeat FrameStacker's whole memory-bounded design.
+            saveOriginalFrames: !mode.isUnbounded,
+            isUnbounded: mode.isUnbounded
         )
-        multiFrameProgress = (0, settings.frameCount)
+        multiFrameProgress = (0, settings.isUnbounded ? 0 : settings.frameCount)
         motionMonitor.start()
 
         multiFrameTask = Task { @MainActor in

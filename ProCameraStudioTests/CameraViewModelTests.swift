@@ -145,6 +145,26 @@ final class CameraViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.lastMultiFrameCapture?.width, 4032)
     }
 
+    /// Guards the real bug fixed in this phase: stopping an unbounded
+    /// (Long Exposure/Star Trails) capture must finalize and save whatever
+    /// was captured so far, not discard it the way a throwing
+    /// CancellationError would.
+    @MainActor
+    func testCancellingUnboundedNightCaptureStillSavesResult() async {
+        let cameraService = MockCameraService(authorized: true)
+        cameraService.multiFrameBurstDelayNanoseconds = 30_000_000
+        let mediaStorage = MockMediaStorage(authorized: true)
+        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: mediaStorage, libraryStore: MockLibraryStore())
+        await viewModel.start()
+
+        viewModel.startMultiFrameCapture(mode: .starTrails)
+        try? await Task.sleep(nanoseconds: 80_000_000)
+        viewModel.cancelMultiFrameCapture()
+
+        let done = await waitUntil(timeout: 2.0) { viewModel.lastMultiFrameCapture != nil }
+        XCTAssertTrue(done, "Stopping an unbounded capture should finalize and save a result, not discard it")
+    }
+
     @MainActor
     func testStartExposureBracketSavesAllFrames() async {
         let cameraService = MockCameraService(authorized: true)

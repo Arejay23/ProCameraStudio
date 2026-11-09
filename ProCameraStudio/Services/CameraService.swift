@@ -633,22 +633,31 @@ final class CameraService: NSObject, CameraServicing {
 
     // MARK: - Multi-frame capture (Phase 4)
 
+    /// Cancellation here is cooperative (checked via Task.isCancelled, not
+    /// Task.checkCancellation()) and never throws: stopping an unbounded
+    /// Long Exposure/Star Trails capture must finalize and return whatever
+    /// was accumulated so far, not discard it. The in-flight frame (if any)
+    /// finishes capturing before the loop exits — stopping ends the capture,
+    /// it doesn't abort it mid-frame.
     func captureMultiFrameBurst(settings: MultiFrameCaptureSettings, progress: @escaping (Int, Int) -> Void) async throws -> MultiFrameCaptureResult {
         let stacker = FrameStacker(algorithm: settings.algorithm)
         var originals: [CapturedPhoto] = []
+        let ceiling = max(settings.frameCount, 1)
+        var index = 0
 
-        for index in 0..<max(settings.frameCount, 1) {
-            try Task.checkCancellation()
+        while !Task.isCancelled, index < ceiling {
             let captured = try await captureSingleFrameForStacking()
             stacker.add(captured)
             if settings.saveOriginalFrames {
                 originals.append(captured)
             }
-            progress(index + 1, settings.frameCount)
+            index += 1
+            // Unbounded modes report total as 0 — a sentinel meaning "no
+            // fixed target," so the UI shows a running count, not "of N".
+            progress(index, settings.isUnbounded ? 0 : ceiling)
 
-            if index < settings.frameCount - 1 {
-                try await Task.sleep(nanoseconds: UInt64(max(settings.intervalSeconds, 0) * 1_000_000_000))
-            }
+            if Task.isCancelled || index >= ceiling { break }
+            try? await Task.sleep(nanoseconds: UInt64(max(settings.intervalSeconds, 0) * 1_000_000_000))
         }
 
         guard let stacked = stacker.finish() else {

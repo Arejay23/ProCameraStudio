@@ -16,6 +16,8 @@ struct NightModePreviewIllustration: View {
                 drawLongExposure(context, size)
             case .starTrails:
                 drawStarTrails(context, size)
+            case .lightning:
+                drawLightning(context, size)
             }
         }
         .frame(width: 88, height: 60)
@@ -61,5 +63,19 @@ struct NightModePreviewIllustration: View {
         }
         let dot = Path(ellipseIn: CGRect(x: center.x - 1.5, y: center.y - 1.5, width: 3, height: 3))
         context.fill(dot, with: .color(.white))
+    }
+
+    private func drawLightning(_ context: GraphicsContext, _ size: CGSize) {
+        var bolt = Path()
+        let midX = size.width / 2
+        bolt.move(to: CGPoint(x: midX + 10, y: 4))
+        bolt.addLine(to: CGPoint(x: midX - 8, y: size.height * 0.5))
+        bolt.addLine(to: CGPoint(x: midX + 4, y: size.height * 0.5))
+        bolt.addLine(to: CGPoint(x: midX - 10, y: size.height - 4))
+        bolt.addLine(to: CGPoint(x: midX + 6, y: size.height * 0.55))
+        bolt.addLine(to: CGPoint(x: midX - 6, y: size.height * 0.55))
+        bolt.closeSubpath()
+        context.fill(bolt, with: .color(.yellow.opacity(0.9)))
+        context.stroke(bolt, with: .color(.white.opacity(0.8)), lineWidth: 0.5)
     }
 }

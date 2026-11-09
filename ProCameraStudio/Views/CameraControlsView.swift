@@ -138,12 +138,15 @@ struct CameraControlsView: View {
             .disabled(viewModel.multiFrameProgress != nil)
 
             if viewModel.multiFrameProgress == nil {
-                Text(viewModel.selectedNightMode.explanation)
-                    .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.7))
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 24)
-                    .fixedSize(horizontal: false, vertical: true)
+                HStack(alignment: .top, spacing: 10) {
+                    NightModePreviewIllustration(mode: viewModel.selectedNightMode)
+                    Text(viewModel.selectedNightMode.explanation)
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.7))
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.horizontal, 24)
             }
             if !viewModel.isDeviceStable, viewModel.multiFrameProgress != nil {
                 Label("Hold steady for best results", systemImage: "exclamationmark.triangle.fill")
@@ -189,7 +192,9 @@ struct CameraControlsView: View {
         } else if let progress = viewModel.multiFrameProgress, viewModel.isNightModeActive {
             HStack(spacing: 6) {
                 Circle().fill(.orange).frame(width: 8, height: 8)
-                Text("Frame \(progress.current) of \(progress.total)")
+                // total == 0 is the "unbounded" sentinel (Long Exposure/Star
+                // Trails run until Stop, not to a fixed count).
+                Text(progress.total == 0 ? "Frame \(progress.current) · tap Stop when ready" : "Frame \(progress.current) of \(progress.total)")
                     .font(.caption.monospacedDigit().bold())
             }
             .foregroundStyle(.white)
