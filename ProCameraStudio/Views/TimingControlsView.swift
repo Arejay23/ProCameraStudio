@@ -1,15 +1,16 @@
 import SwiftUI
 
-struct NightModeControlsView: View {
+/// Exposure bracketing, countdown timer, and interval capture — grouped
+/// together because none of them are specific to Night mode (bracket and
+/// timer are just as useful for a normal photo), unlike the old
+/// NightModeControlsView this replaces, which bundled them in with the
+/// night-stacking controls for no real reason beyond "it's an extra panel."
+struct TimingControlsView: View {
     @ObservedObject var viewModel: CameraViewModel
-    @State private var selectedMode: NightCaptureMode = .noiseReduction
-    @State private var saveOriginals = false
     @State private var intervalSeconds: Double = 3
 
     var body: some View {
         VStack(spacing: 14) {
-            stackingSection
-            Divider().background(.white.opacity(0.2))
             bracketSection
             Divider().background(.white.opacity(0.2))
             timerAndIntervalSection
@@ -18,67 +19,6 @@ struct NightModeControlsView: View {
         .background(.black.opacity(0.75), in: RoundedRectangle(cornerRadius: 16))
         .padding(.horizontal, 16)
     }
-
-    // MARK: - Multi-frame stacking (noise reduction / long exposure / star trails)
-
-    private var stackingSection: some View {
-        VStack(spacing: 10) {
-            Picker("Mode", selection: $selectedMode) {
-                ForEach(NightCaptureMode.allCases, id: \.self) { mode in
-                    Text(mode.displayName).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-
-            HStack(alignment: .top, spacing: 10) {
-                NightModePreviewIllustration(mode: selectedMode)
-                Text(selectedMode.explanation)
-                    .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.7))
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            DisclosureGroup("Best Settings") {
-                Text(selectedMode.bestSettingsTip)
-                    .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.75))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 4)
-            }
-            .font(.caption.bold())
-            .foregroundStyle(.white.opacity(0.85))
-            .tint(.white)
-
-            if !viewModel.isDeviceStable, viewModel.multiFrameProgress != nil {
-                Label("Hold steady for best results", systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption2)
-                    .foregroundStyle(.orange)
-            }
-
-            Toggle("Save original frames", isOn: $saveOriginals)
-                .font(.caption)
-                .toggleStyle(SwitchToggleStyle(tint: .orange))
-
-            if let progress = viewModel.multiFrameProgress {
-                progressRow(current: progress.current, total: progress.total) {
-                    viewModel.cancelMultiFrameCapture()
-                }
-            } else {
-                Button {
-                    viewModel.startMultiFrameCapture(mode: selectedMode, saveOriginalFrames: saveOriginals)
-                } label: {
-                    Text("Start \(selectedMode.displayName)")
-                        .font(.caption.bold())
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.orange)
-            }
-        }
-    }
-
-    // MARK: - Exposure bracketing
 
     private var bracketSection: some View {
         VStack(spacing: 8) {
@@ -100,8 +40,6 @@ struct NightModeControlsView: View {
             }
         }
     }
-
-    // MARK: - Timer / interval capture
 
     private var timerAndIntervalSection: some View {
         VStack(spacing: 10) {

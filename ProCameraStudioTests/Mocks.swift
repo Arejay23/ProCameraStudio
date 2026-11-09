@@ -136,6 +136,12 @@ final class MockCameraService: CameraServicing {
         isRecording = false
         completion(recordedVideoResult)
     }
+
+    private(set) var isHistogramEnabled = false
+
+    func setHistogramEnabled(_ enabled: Bool, update: @escaping (HistogramData) -> Void) {
+        isHistogramEnabled = enabled
+    }
 }
 
 final class MockMediaStorage: MediaStoring {

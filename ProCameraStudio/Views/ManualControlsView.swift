@@ -4,6 +4,8 @@ import SwiftUI
 struct ManualControlsView: View {
     @ObservedObject var viewModel: CameraViewModel
 
+    @State private var newPresetName = ""
+
     var body: some View {
         VStack(spacing: 14) {
             lensPicker
@@ -13,10 +15,59 @@ struct ManualControlsView: View {
             focusRow
             whiteBalanceRow
             lockAndResetRow
+            Divider().background(.white.opacity(0.2))
+            presetsSection
         }
         .padding(16)
         .background(.black.opacity(0.75), in: RoundedRectangle(cornerRadius: 16))
         .padding(.horizontal, 16)
+    }
+
+    private var presetsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Presets").font(.caption).foregroundStyle(.white.opacity(0.7))
+
+            if !viewModel.presetStore.presets.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(viewModel.presetStore.presets) { preset in
+                            presetChip(preset)
+                        }
+                    }
+                }
+            }
+
+            HStack {
+                TextField("Preset name", text: $newPresetName)
+                    .font(.caption)
+                    .textFieldStyle(.roundedBorder)
+                Button("Save") {
+                    let trimmed = newPresetName.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmed.isEmpty else { return }
+                    viewModel.saveCurrentAsPreset(name: trimmed)
+                    newPresetName = ""
+                }
+                .font(.caption.bold())
+                .disabled(newPresetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+    }
+
+    private func presetChip(_ preset: CameraPreset) -> some View {
+        HStack(spacing: 4) {
+            Button(preset.name) {
+                viewModel.applyPreset(preset)
+            }
+            Button(action: { viewModel.deletePreset(preset) }) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.caption2)
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(.white)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(.white.opacity(0.15), in: Capsule())
     }
 
     @ViewBuilder

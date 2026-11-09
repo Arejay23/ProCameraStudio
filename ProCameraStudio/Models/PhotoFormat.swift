@@ -2,7 +2,7 @@
 /// device/lens/format, so CameraService validates this against real capabilities
 /// and falls back to .processed — reporting that back — rather than silently
 /// claiming RAW capture succeeded when it didn't.
-enum PhotoFormat: String, CaseIterable, Hashable {
+enum PhotoFormat: String, CaseIterable, Hashable, Codable {
     case processed
     case raw
     case appleProRAW

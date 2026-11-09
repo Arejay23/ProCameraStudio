@@ -54,4 +54,9 @@ protocol CameraServicing: AnyObject {
     /// Finalizes the current recording. Reports back the actual resolution and
     /// whether ProRes was really used, not just what was requested.
     func stopRecording(completion: @escaping (Result<RecordedVideo, CameraError>) -> Void)
+
+    /// Toggles a throttled, downscaled AVCaptureVideoDataOutput tap (photo
+    /// mode only) that computes a live RGB histogram via CIAreaHistogram and
+    /// reports it on the main thread. No-op if already in the requested state.
+    func setHistogramEnabled(_ enabled: Bool, update: @escaping (HistogramData) -> Void)
 }

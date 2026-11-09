@@ -23,6 +23,11 @@ struct CameraView: View {
             }
             .ignoresSafeArea()
 
+            if viewModel.isGridVisible {
+                GridOverlayView()
+                    .ignoresSafeArea()
+            }
+
             CameraControlsView(
                 viewModel: viewModel,
                 activePanel: $activePanel,

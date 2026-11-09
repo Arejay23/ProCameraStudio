@@ -32,6 +32,11 @@ final class CameraViewModel: ObservableObject {
     @Published private(set) var bracketProgress: (current: Int, total: Int)?
     @Published private(set) var isDeviceStable = true
 
+    // Night is a primary mode (like Photo/Video), not a popup — the shutter
+    // button starts/stops the stack capture directly.
+    @Published var isNightModeActive = false
+    @Published var selectedNightMode: NightCaptureMode = .noiseReduction
+
     // Phase 5: video recording.
     @Published private(set) var videoCapabilities = VideoCapabilities.fallback
     @Published private(set) var isRecording = false
@@ -44,11 +49,21 @@ final class CameraViewModel: ObservableObject {
     @Published private(set) var computationalProgress: (current: Int, total: Int)?
     @Published private(set) var lastComputationalResult: CapturedPhotoInfo?
 
+    // Phase 8: polish/reliability.
+    @Published var isGridVisible = false
+    @Published private(set) var levelRollDegrees: Double = 0
+    @Published private(set) var isHistogramVisible = false
+    @Published private(set) var histogramData: HistogramData?
+    @Published private(set) var isBurstCapturing = false
+    @Published private(set) var burstCount = 0
+    let presetStore = PresetStore()
+
     nonisolated let session: AVCaptureSession
     private let cameraService: CameraServicing
     private let mediaStorage: MediaStoring
     private let libraryStore: LibraryStoring
     private let motionMonitor = MotionMonitor()
+    private let levelMonitor = DeviceLevelMonitor()
     private var cancellables = Set<AnyCancellable>()
 
     private var countdownTask: Task<Void, Never>?
@@ -59,6 +74,7 @@ final class CameraViewModel: ObservableObject {
     private var recordingStartDate: Date?
     private var hdrTask: Task<Void, Never>?
     private var focusStackTask: Task<Void, Never>?
+    private var burstTask: Task<Void, Never>?
 
     // No default for libraryStore: it's @MainActor-isolated, and Swift
     // evaluates default-argument expressions in a nonisolated context, so
@@ -76,6 +92,9 @@ final class CameraViewModel: ObservableObject {
         motionMonitor.$isStable
             .assign(to: \.isDeviceStable, on: self)
             .store(in: &cancellables)
+        levelMonitor.$rollDegrees
+            .assign(to: \.levelRollDegrees, on: self)
+            .store(in: &cancellables)
     }
 
     func start() async {
@@ -92,6 +111,7 @@ final class CameraViewModel: ObservableObject {
             activeDeviceName = cameraService.activeDeviceName
             capabilities = cameraService.capabilities
             videoCapabilities = cameraService.videoCapabilities
+            levelMonitor.start()
         } catch {
             errorMessage = (error as? CameraError)?.errorDescription ?? error.localizedDescription
         }
@@ -100,6 +120,10 @@ final class CameraViewModel: ObservableObject {
     func stop() {
         cameraService.stopSession()
         isSessionRunning = false
+        levelMonitor.stop()
+        if isHistogramVisible {
+            toggleHistogram()
+        }
     }
 
     // MARK: - Camera/lens selection
@@ -362,7 +386,19 @@ final class CameraViewModel: ObservableObject {
 
     // MARK: - Multi-frame capture (Phase 4)
 
-    func startMultiFrameCapture(mode: NightCaptureMode, saveOriginalFrames: Bool = false) {
+    /// What the shutter button does while Night mode is selected: cancels an
+    /// in-flight stack capture, or starts one using the currently selected
+    /// NightCaptureMode — same start/stop-on-the-main-button pattern the
+    /// record button already uses for video.
+    func nightCaptureButtonTapped() {
+        if multiFrameTask != nil {
+            cancelMultiFrameCapture()
+        } else {
+            startMultiFrameCapture(mode: selectedNightMode)
+        }
+    }
+
+    func startMultiFrameCapture(mode: NightCaptureMode) {
         guard multiFrameTask == nil else { return }
         if ProcessInfo.processInfo.thermalState == .critical {
             errorMessage = "Device is too hot for multi-frame capture right now. Let it cool down and try again."
@@ -373,7 +409,10 @@ final class CameraViewModel: ObservableObject {
             frameCount: mode.defaultFrameCount,
             intervalSeconds: mode.defaultIntervalSeconds,
             algorithm: mode.algorithm,
-            saveOriginalFrames: saveOriginalFrames
+            // Always true now: originals only ever go to the local library
+            // (never Photos, per the fix above), so there's no real downside
+            // to always keeping them for in-app before/after comparison.
+            saveOriginalFrames: true
         )
         multiFrameProgress = (0, settings.frameCount)
         motionMonitor.start()
@@ -401,6 +440,12 @@ final class CameraViewModel: ObservableObject {
         multiFrameTask?.cancel()
     }
 
+    /// Only the merged result goes to Photos — original frames (when kept at
+    /// all; see MultiFrameCaptureSettings.saveOriginalFrames) go to the local
+    /// library only, for in-app before/after comparison, matching the Phase 6
+    /// HDR/focus-stack pattern. Earlier this also dumped every original frame
+    /// into Photos individually, which meant a 10–20 frame night-stack
+    /// capture flooded the camera roll with that many extra photos — fixed.
     private func handleMultiFrameResult(_ result: MultiFrameCaptureResult) async {
         let info = CapturedPhotoInfo(from: result.stacked)
         lastMultiFrameCapture = info
@@ -412,9 +457,6 @@ final class CameraViewModel: ObservableObject {
             errorMessage = error.errorDescription
         } else {
             addToLibrary(result.stacked, originals: result.originalFrames, kindOverride: .nightStackResult)
-        }
-        for frame in result.originalFrames {
-            _ = await saveAsync(frame.data)
         }
     }
 
@@ -471,6 +513,7 @@ final class CameraViewModel: ObservableObject {
         cancelExposureBracket()
         cancelHDRCapture()
         cancelFocusStack()
+        stopBurstCapture()
         if isRecording {
             stopRecording()
         }
@@ -669,5 +712,86 @@ final class CameraViewModel: ObservableObject {
         if lastComputationalResult == info {
             lastComputationalResult = nil
         }
+    }
+
+    // MARK: - Histogram (Phase 8)
+
+    func toggleHistogram() {
+        isHistogramVisible.toggle()
+        cameraService.setHistogramEnabled(isHistogramVisible) { [weak self] data in
+            self?.histogramData = data
+        }
+        if !isHistogramVisible {
+            histogramData = nil
+        }
+    }
+
+    // MARK: - Burst capture (Phase 8)
+
+    /// Fires continuous captures, each awaited before the next starts (a
+    /// hardware-realistic burst rate rather than an artificial fixed delay),
+    /// until cancelled. Each frame saves individually, same as bracket mode.
+    func startBurstCapture() {
+        guard burstTask == nil else { return }
+        isBurstCapturing = true
+        burstCount = 0
+        burstTask = Task { @MainActor in
+            while !Task.isCancelled {
+                let result = await capturePhotoAsync()
+                switch result {
+                case .success(let captured):
+                    burstCount += 1
+                    await saveBurstFrame(captured)
+                case .failure:
+                    break
+                }
+                if case .failure = result { break }
+            }
+            isBurstCapturing = false
+            burstTask = nil
+        }
+    }
+
+    func stopBurstCapture() {
+        burstTask?.cancel()
+    }
+
+    private func capturePhotoAsync() async -> Result<CapturedPhoto, CameraError> {
+        await withCheckedContinuation { continuation in
+            cameraService.capturePhoto { result in
+                continuation.resume(returning: result)
+            }
+        }
+    }
+
+    private func saveBurstFrame(_ captured: CapturedPhoto) async {
+        guard await mediaStorage.requestAddOnlyAuthorization() else { return }
+        if case .success = await saveAsync(captured.data) {
+            addToLibrary(captured)
+        }
+    }
+
+    // MARK: - Presets (Phase 8)
+
+    func saveCurrentAsPreset(name: String) {
+        presetStore.save(name: name, from: configuration)
+    }
+
+    func applyPreset(_ preset: CameraPreset) {
+        apply {
+            $0.manualISO = preset.manualISO
+            $0.manualExposureDuration = preset.manualExposureDurationSeconds.map {
+                CMTimeMakeWithSeconds($0, preferredTimescale: 1_000_000)
+            }
+            $0.exposureBias = preset.exposureBias
+            $0.manualFocusLensPosition = preset.manualFocusLensPosition
+            $0.manualWhiteBalanceKelvin = preset.manualWhiteBalanceKelvin
+            $0.lensType = preset.lensType
+            $0.photoFormat = preset.photoFormat
+        }
+    }
+
+    func deletePreset(_ preset: CameraPreset) {
+        presetStore.delete(preset)
     }
 }

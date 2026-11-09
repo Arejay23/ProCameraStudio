@@ -1,4 +1,5 @@
 @preconcurrency import AVFoundation
+import CoreImage
 
 final class CameraService: NSObject, CameraServicing {
 
@@ -8,12 +9,21 @@ final class CameraService: NSObject, CameraServicing {
     private let sessionQueue = DispatchQueue(label: "com.procamerastudio.sessionQueue")
     private let photoOutput = AVCapturePhotoOutput()
     private let movieFileOutput = AVCaptureMovieFileOutput()
+    private let videoDataOutput = AVCaptureVideoDataOutput()
     private var videoDeviceInput: AVCaptureDeviceInput?
     private var audioDeviceInput: AVCaptureDeviceInput?
     private var activeCaptures: [PhotoCaptureProcessor] = []
     private var currentRecordingURL: URL?
     private var videoRecordingProcessor: VideoRecordingProcessor?
     private var interruptionObserver: NSObjectProtocol?
+
+    // Histogram (Phase 8): throttled so a continuous analysis tap doesn't add
+    // meaningful preview-stability risk — this is the pipeline Phase 2
+    // deferred building until there was a concrete, scoped use for it.
+    private var histogramUpdateHandler: ((HistogramData) -> Void)?
+    private var histogramFrameCounter = 0
+    private let histogramFrameInterval = 6
+    private let analysisQueue = DispatchQueue(label: "com.procamerastudio.analysisQueue", qos: .utility)
 
     private static let minimumFreeBytesToStartRecording: Int64 = 200 * 1024 * 1024
 
@@ -315,6 +325,9 @@ final class CameraService: NSObject, CameraServicing {
             session.addOutput(photoOutput)
         }
         updateMaxPhotoDimensions()
+        if histogramUpdateHandler != nil {
+            addVideoDataOutputIfNeeded()
+        }
     }
 
     private func configureVideoMode(resolution: VideoResolution, frameRate: Double) throws {
@@ -322,6 +335,9 @@ final class CameraService: NSObject, CameraServicing {
         do {
             if session.outputs.contains(photoOutput) {
                 session.removeOutput(photoOutput)
+            }
+            if session.outputs.contains(videoDataOutput) {
+                session.removeOutput(videoDataOutput)
             }
             if audioDeviceInput == nil, let audioDevice = AVCaptureDevice.default(for: .audio) {
                 let input = try AVCaptureDeviceInput(device: audioDevice)
@@ -441,6 +457,37 @@ final class CameraService: NSObject, CameraServicing {
             return .max
         }
         return capacity
+    }
+
+    // MARK: - Histogram (Phase 8)
+
+    func setHistogramEnabled(_ enabled: Bool, update: @escaping (HistogramData) -> Void) {
+        histogramUpdateHandler = enabled ? update : nil
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            guard self.activeConfiguration.captureMode == .photo else { return }
+            self.session.beginConfiguration()
+            defer { self.session.commitConfiguration() }
+            if enabled {
+                self.addVideoDataOutputIfNeeded()
+            } else if self.session.outputs.contains(self.videoDataOutput) {
+                self.session.removeOutput(self.videoDataOutput)
+            }
+        }
+    }
+
+    /// Assumes it's called inside an already-open session configuration
+    /// transaction (either this method's own, or configurePhotoMode's) —
+    /// AVCaptureSession doesn't officially support nested begin/commit pairs,
+    /// so this never opens one of its own.
+    private func addVideoDataOutputIfNeeded() {
+        guard !session.outputs.contains(videoDataOutput) else { return }
+        videoDataOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
+        videoDataOutput.alwaysDiscardsLateVideoFrames = true
+        videoDataOutput.setSampleBufferDelegate(self, queue: analysisQueue)
+        if session.canAddOutput(videoDataOutput) {
+            session.addOutput(videoDataOutput)
+        }
     }
 
     private func updateMaxPhotoDimensions() {
@@ -751,4 +798,59 @@ final class CameraService: NSObject, CameraServicing {
 
 private func clamp<T: Comparable>(_ value: T, _ lower: T, _ upper: T) -> T {
     min(max(value, lower), upper)
+}
+
+extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate {
+    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        histogramFrameCounter += 1
+        guard histogramFrameCounter % histogramFrameInterval == 0 else { return }
+        guard let handler = histogramUpdateHandler else { return }
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+
+        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+        guard let histogramData = Self.computeHistogram(from: ciImage) else { return }
+        DispatchQueue.main.async { handler(histogramData) }
+    }
+
+    /// CIAreaHistogram is the Core Image filter designed exactly for this —
+    /// it computes the histogram on the GPU, and only a tiny (binCount x 1)
+    /// image needs to be rendered out, not the full camera frame, keeping
+    /// this cheap even running continuously on a background queue.
+    private static func computeHistogram(from image: CIImage) -> HistogramData? {
+        let binCount = 64
+        guard let histogramFilter = CIFilter(name: "CIAreaHistogram") else { return nil }
+        histogramFilter.setValue(image, forKey: kCIInputImageKey)
+        histogramFilter.setValue(CIVector(cgRect: image.extent), forKey: kCIInputExtentKey)
+        histogramFilter.setValue(binCount, forKey: "inputCount")
+        histogramFilter.setValue(1.0, forKey: "inputScale")
+        guard let histogramImage = histogramFilter.outputImage else { return nil }
+
+        let context = CIContext()
+        var bitmap = [Float](repeating: 0, count: binCount * 4)
+        context.render(
+            histogramImage,
+            toBitmap: &bitmap,
+            rowBytes: binCount * 4 * MemoryLayout<Float>.size,
+            bounds: CGRect(x: 0, y: 0, width: binCount, height: 1),
+            format: .RGBAf,
+            colorSpace: nil
+        )
+
+        var red = [Float](repeating: 0, count: binCount)
+        var green = [Float](repeating: 0, count: binCount)
+        var blue = [Float](repeating: 0, count: binCount)
+        var maxValue: Float = 0.0001
+        for i in 0..<binCount {
+            red[i] = bitmap[i * 4]
+            green[i] = bitmap[i * 4 + 1]
+            blue[i] = bitmap[i * 4 + 2]
+            maxValue = max(maxValue, red[i], green[i], blue[i])
+        }
+        for i in 0..<binCount {
+            red[i] /= maxValue
+            green[i] /= maxValue
+            blue[i] /= maxValue
+        }
+        return HistogramData(red: red, green: green, blue: blue)
+    }
 }

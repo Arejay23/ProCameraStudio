@@ -2,7 +2,7 @@ import AVFoundation
 
 /// The physical lens to use on the back camera system. iPhone 14 Pro's front
 /// camera only has a wide lens, so CameraService falls back to .wide there.
-enum LensType: String, CaseIterable, Hashable {
+enum LensType: String, CaseIterable, Hashable, Codable {
     case ultraWide
     case wide
     case telephoto
