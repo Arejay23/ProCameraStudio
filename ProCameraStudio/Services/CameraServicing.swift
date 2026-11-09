@@ -40,6 +40,12 @@ protocol CameraServicing: AnyObject {
     /// Each frame is returned individually — not merged.
     func captureExposureBracket(settings: BracketSettings, progress: @escaping (Int, Int) -> Void) async throws -> [CapturedPhoto]
 
+    /// Captures `settings.frameCount` frames sweeping manual focus from near
+    /// (0) to far (1), restoring the device to auto focus afterward. Throws if
+    /// manual focus isn't supported. Each frame is returned individually —
+    /// FocusStackProcessor (Phase 6) merges them, independent of this service.
+    func captureFocusStack(settings: FocusStackSettings, progress: @escaping (Int, Int) -> Void) async throws -> [CapturedPhoto]
+
     /// Starts recording to a temp file. Throws without starting if not in
     /// video mode, already recording, storage is critically low, or the
     /// device is thermally critical — never silently starts a doomed recording.

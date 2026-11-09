@@ -5,11 +5,14 @@ enum ActivePanel: Equatable {
     case manual
     case night
     case video
+    case computational
 }
 
 struct CameraView: View {
     @ObservedObject var viewModel: CameraViewModel
+    @ObservedObject var libraryStore: LibraryStore
     @State private var activePanel: ActivePanel = .none
+    @State private var isGalleryPresented = false
 
     var body: some View {
         ZStack {
@@ -20,7 +23,12 @@ struct CameraView: View {
             }
             .ignoresSafeArea()
 
-            CameraControlsView(viewModel: viewModel, activePanel: $activePanel)
+            CameraControlsView(
+                viewModel: viewModel,
+                activePanel: $activePanel,
+                libraryStore: libraryStore,
+                onOpenGallery: { isGalleryPresented = true }
+            )
 
             if let countdown = viewModel.countdownSeconds {
                 countdownOverlay(countdown)
@@ -31,6 +39,9 @@ struct CameraView: View {
             Button("OK", role: .cancel) { viewModel.errorMessage = nil }
         } message: {
             Text(viewModel.errorMessage ?? "")
+        }
+        .sheet(isPresented: $isGalleryPresented) {
+            GalleryView(libraryStore: libraryStore)
         }
         .onDisappear {
             viewModel.cancelAllSequenceCapture()

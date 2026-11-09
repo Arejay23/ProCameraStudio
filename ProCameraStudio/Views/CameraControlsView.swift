@@ -3,6 +3,8 @@ import SwiftUI
 struct CameraControlsView: View {
     @ObservedObject var viewModel: CameraViewModel
     @Binding var activePanel: ActivePanel
+    @ObservedObject var libraryStore: LibraryStore
+    let onOpenGallery: () -> Void
 
     var body: some View {
         VStack(spacing: 12) {
@@ -15,6 +17,7 @@ struct CameraControlsView: View {
             Spacer()
             captureInfoBanner
             recordingInfoBanner
+            computationalInfoBanner
             switch activePanel {
             case .manual:
                 ManualControlsView(viewModel: viewModel)
@@ -24,6 +27,9 @@ struct CameraControlsView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             case .video:
                 VideoControlsView(viewModel: viewModel)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            case .computational:
+                ComputationalControlsView(viewModel: viewModel)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             case .none:
                 EmptyView()
@@ -44,6 +50,7 @@ struct CameraControlsView: View {
             if viewModel.configuration.captureMode == .video {
                 panelToggleButton(icon: "gearshape", panel: .video, label: "Video settings")
             } else {
+                panelToggleButton(icon: "wand.and.stars", panel: .computational, label: "HDR and focus stack")
                 panelToggleButton(icon: "moon.stars", panel: .night, label: "Night mode controls")
             }
             panelToggleButton(icon: "slider.horizontal.3", panel: .manual, label: "Manual controls")
@@ -145,6 +152,23 @@ struct CameraControlsView: View {
         }
     }
 
+    @ViewBuilder
+    private var computationalInfoBanner: some View {
+        if let info = viewModel.lastComputationalResult {
+            VStack(spacing: 2) {
+                Text(info.formatLabel)
+                    .font(.caption.bold())
+                Text("\(info.width)×\(info.height) · \(String(format: "%.1f", info.fileSizeMB)) MB")
+                    .font(.caption2)
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(.black.opacity(0.65), in: Capsule())
+            .transition(.opacity)
+        }
+    }
+
     private func panelToggleButton(icon: String, panel: ActivePanel, label: String) -> some View {
         Button(action: {
             withAnimation { activePanel = (activePanel == panel) ? .none : panel }
@@ -160,6 +184,7 @@ struct CameraControlsView: View {
 
     private var bottomRow: some View {
         HStack {
+            galleryButton
             Spacer()
             captureOrRecordButton
             Spacer()
@@ -167,6 +192,26 @@ struct CameraControlsView: View {
         }
         .padding(.horizontal, 40)
         .padding(.bottom, 36)
+    }
+
+    @ViewBuilder
+    private var galleryButton: some View {
+        Button(action: onOpenGallery) {
+            Group {
+                if let latest = libraryStore.items.first,
+                   let image = UIImage(contentsOfFile: libraryStore.thumbnailURL(for: latest).path) {
+                    Image(uiImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                } else {
+                    Color.black.opacity(0.4)
+                }
+            }
+            .frame(width: 44, height: 44)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(.white.opacity(0.6), lineWidth: 1.5))
+        }
+        .accessibilityLabel("Open library")
     }
 
     @ViewBuilder

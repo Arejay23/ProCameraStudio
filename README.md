@@ -1,4 +1,4 @@
-# ProCamera Studio — Phase 1–5
+# ProCamera Studio — Phase 1–7
 
 ## Prerequisites (install these before building)
 
@@ -43,7 +43,7 @@ xcodegen generate
 - [ ] Switch-camera button flips to front camera and back
 - [ ] Capture button saves a photo and it appears in Photos
 - [ ] Backgrounding the app and returning keeps the preview running
-- [ ] `⌘U` in Xcode runs the `ProCameraStudioTests` target and all fifteen tests pass
+- [ ] `⌘U` in Xcode runs the `ProCameraStudioTests` target and all twenty-five tests pass
 - [ ] Tapping the slider icon (top-right) shows/hides the manual controls panel
 - [ ] Dragging the ISO/Shutter/EV/Focus/White Balance sliders shows an "Auto" button and an
       orange highlight while a manual value is active
@@ -92,11 +92,42 @@ xcodegen generate
 - [ ] Backgrounding the app or leaving the camera screen while recording stops and saves the
       recording rather than losing it or leaving the session in a broken state
 - [ ] An incoming phone call during recording stops the recording gracefully (file still saves)
+- [ ] Tapping the wand icon (top-right, photo mode only) shows HDR/Focus Stack controls
+- [ ] "Capture HDR" takes 3 bracketed exposures, shows a progress bar through capture and a
+      brief "Processing…" state, then saves one merged photo (not three) with visibly recovered
+      highlight/shadow detail compared to a normal shot of a high-contrast scene
+- [ ] "Capture Focus Stack" takes 5 frames sweeping focus and saves one merged photo; with a
+      tripod and a scene with both near and far detail, more of the frame should be in focus
+      than any single shot could manage
+- [ ] The thumbnail button (bottom-left) shows your most recent capture and opens the library
+- [ ] The library grid shows every photo, RAW file, video, bracket frame, HDR/focus-stack/night-
+      stack result captured so far — tap any item to open it full-screen with metadata
+- [ ] Items with preserved source frames (HDR, focus stack, night stack with "save originals" on)
+      show a stack icon in the grid and an Original/Edited toggle in detail view
+- [ ] Tapping "Edit" on a photo opens adjustment sliders (exposure, highlights, shadows, white
+      balance, contrast, saturation, curve) plus crop presets, with a live preview that updates
+      as you drag; "Save" writes a separate edited file without touching the original
+- [ ] Deleting an item removes it from the library (and its original frames/edit, if any) without
+      touching anything already saved to Photos
+- [ ] The share button exports the current file (original or edited) via the system share sheet
 
-## Known limitations (Phase 1–5)
+## Known limitations (Phase 1–7)
 
 - Portrait orientation only — landscape is not yet handled.
 - No flash/torch or pinch-to-zoom control yet.
+- **Every captured photo/video is stored twice**: once in the Photos library (via add-only
+  permission) and once in this app's own private library (Documents/MediaLibrary), which is
+  what lets the gallery work without broader Photos read access. Deleting an item from the
+  in-app library does not delete the Photos copy, and vice versa — they're independent. This
+  was a deliberate trade-off (see the Phase 7 question this was built from) favoring privacy
+  over storage efficiency.
+- Curves editing is one S-curve-strength slider through `CIToneCurve`'s five fixed points, not
+  a freeform interactive curve editor. Crop is four fixed aspect-ratio presets (Original/1:1/
+  4:3/16:9), not a drag-to-crop gesture. Both are real, working, non-destructive adjustments —
+  just deliberately scoped down rather than half-building a much larger UI.
+- The edit preview re-renders the full adjustment pipeline at full resolution on every slider
+  change rather than using a separate downscaled preview path. CIContext is GPU-backed so this
+  is fast for most photos, but a 48MP ProRAW edit can visibly lag while dragging a slider.
 - No live exposure histogram. The original Phase 2 brief allowed skipping this "if feasible
   without destabilizing the camera pipeline" — a real-time histogram needs a continuous
   `AVCaptureVideoDataOutput` sample-buffer pipeline running alongside the photo pipeline, which
@@ -209,6 +240,53 @@ for "night mode" marketing language to blur this:
 - **Switching camera, resolution, format, or mode is blocked while recording** (both in the UI,
   disabled/dimmed, and defensively in `CameraService`, which throws rather than silently
   reconfiguring the session underneath an active recording).
+
+## Computational photography notes (Phase 6)
+
+- **HDR fusion is a simplified, real technique — highlight/shadow recovery blending — not full
+  Mertens exposure fusion.** It merges the 3 bracketed frames from `captureExposureBracket`
+  (reused from Phase 4, not a separate capture path) by blending in detail from the darkest
+  frame wherever the base frame is blown out, and from the brightest frame wherever the base is
+  crushed, each blend weighted down by a difference mask where the frames disagree (likely scene
+  motion) to reduce ghosting. No frame alignment — same tripod assumption Phase 4 already
+  documents for stacking.
+- **Focus stacking measures sharpness via a Laplacian edge filter**, squared so it's always
+  non-negative and peaks at high-contrast edges — a standard, simple sharpness proxy. Each pixel
+  in the result is pulled from whichever source frame scored sharpest there. This does not
+  recover true optical detail that's genuinely absent from every source frame — it selects the
+  best of what's there, frame by frame.
+- **Both processors are pure Core Image — zero AVFoundation dependency.** `HDRFusionProcessor`
+  and `FocusStackProcessor` take `[CapturedPhoto]` in and a `CapturedPhoto` out; they don't touch
+  `CameraService`, the session, or any device object, so they run identically whether the source
+  frames just came off the sensor or were loaded from the library later. This is also what made
+  them unit-testable with synthetic solid-color images (`SyntheticImage`,
+  `ImageProcessingTests`) — no camera or device required, and those tests render for real (not
+  just compile-check), which is exactly what caught nothing being wrong here before this ever
+  reached a device.
+- **Only the merged result is saved to Photos** — the 3–5 source frames are not (to avoid
+  cluttering your camera roll with intermediate frames), but they're always preserved in the
+  local library (see Phase 7) for before/after comparison, regardless of that choice.
+- Processing runs on a detached background task (`Task.detached(priority: .userInitiated)`), not
+  the main actor, so the UI doesn't freeze during fusion — capture progress and a "Processing…"
+  state are both shown.
+
+## Local library notes (Phase 7)
+
+- **The gallery reads from the app's own private storage, never from the Photos library.** This
+  was a deliberate choice (see the question this was built from) to avoid upgrading past the
+  add-only Photos permission Phase 1 established — every successful save path (single photo,
+  RAW/ProRAW, night-stack result, bracket frames, HDR/focus-stack result + originals, video) also
+  writes into `Documents/MediaLibrary`, and the gallery exclusively reads from there.
+- **Thumbnails use `CGImageSourceCreateThumbnailAtIndex`**, which decodes a small embedded/
+  generated preview rather than loading the full image just to downscale it — this is what keeps
+  the grid fast and memory-reasonable even with ProRAW files in the library. Video thumbnails use
+  `AVAssetImageGenerator`.
+- **Editing is genuinely non-destructive**: `PhotoEditProcessor` always renders a *new* file;
+  `LibraryItemRecord.editFileName` points at it separately from `mediaFileName`, and the original
+  is never overwritten or deleted. Reverting just removes the edit file.
+- **RAW/DNG files display via a `CIImage` fallback.** `UIImage(contentsOfFile:)` can't reliably
+  decode DNG, so `MediaDetailView` falls back to `CIImage(contentsOf:)` (ImageIO-backed, which
+  does handle RAW) when the direct `UIImage` load fails.
 
 ## Implications of running a development build on your actual phone
 

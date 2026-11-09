@@ -17,4 +17,13 @@ enum VideoResolution: String, CaseIterable, Hashable {
         case .uhd4K: return "4K"
         }
     }
+
+    /// Nominal pixel dimensions for the preset — what was requested/applied
+    /// via the session, not measured from the output file.
+    var pixelDimensions: (width: Int, height: Int) {
+        switch self {
+        case .hd1080p: return (1920, 1080)
+        case .uhd4K: return (3840, 2160)
+        }
+    }
 }

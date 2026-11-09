@@ -96,6 +96,18 @@ final class MockCameraService: CameraServicing {
         }
     }
 
+    var focusStackResult: Result<[CapturedPhoto], CameraError> = .success([])
+
+    func captureFocusStack(settings: FocusStackSettings, progress: @escaping (Int, Int) -> Void) async throws -> [CapturedPhoto] {
+        for index in 1...max(settings.frameCount, 1) {
+            progress(index, settings.frameCount)
+        }
+        switch focusStackResult {
+        case .success(let frames): return frames
+        case .failure(let error): throw error
+        }
+    }
+
     var videoCapabilities = VideoCapabilities(
         availableResolutions: [.hd1080p, .uhd4K],
         availableFrameRates: [24, 30, 60],
@@ -147,5 +159,82 @@ final class MockMediaStorage: MediaStoring {
     func saveVideo(at url: URL, completion: @escaping (Result<Void, CameraError>) -> Void) {
         savedVideoURL = url
         completion(.success(()))
+    }
+}
+
+final class MockLibraryStore: LibraryStoring {
+    private(set) var items: [LibraryItemRecord] = []
+    private(set) var addPhotoCallCount = 0
+    private(set) var addVideoCallCount = 0
+
+    @discardableResult
+    func addPhoto(
+        data: Data,
+        kind: LibraryItemKind,
+        width: Int,
+        height: Int,
+        formatLabel: String,
+        iso: Double?,
+        exposureTimeSeconds: Double?,
+        fNumber: Double?,
+        originals: [Data]
+    ) -> LibraryItemRecord? {
+        addPhotoCallCount += 1
+        let record = LibraryItemRecord(
+            id: UUID(),
+            kind: kind,
+            captureDate: Date(),
+            mediaFileName: "mock.heic",
+            thumbnailFileName: "mock_thumb.jpg",
+            width: width,
+            height: height,
+            fileSizeBytes: data.count,
+            formatLabel: formatLabel,
+            iso: iso,
+            exposureTimeSeconds: exposureTimeSeconds,
+            fNumber: fNumber,
+            durationSeconds: nil,
+            originalFileNames: originals.isEmpty ? [] : (0..<originals.count).map { "\($0).heic" },
+            editFileName: nil
+        )
+        items.insert(record, at: 0)
+        return record
+    }
+
+    @discardableResult
+    func addVideo(fileURL: URL, width: Int, height: Int, durationSeconds: Double, formatLabel: String) -> LibraryItemRecord? {
+        addVideoCallCount += 1
+        let record = LibraryItemRecord(
+            id: UUID(),
+            kind: .video,
+            captureDate: Date(),
+            mediaFileName: "mock.mov",
+            thumbnailFileName: "mock_thumb.jpg",
+            width: width,
+            height: height,
+            fileSizeBytes: 0,
+            formatLabel: formatLabel,
+            iso: nil,
+            exposureTimeSeconds: nil,
+            fNumber: nil,
+            durationSeconds: durationSeconds,
+            originalFileNames: [],
+            editFileName: nil
+        )
+        items.insert(record, at: 0)
+        return record
+    }
+
+    func mediaURL(for item: LibraryItemRecord) -> URL { FileManager.default.temporaryDirectory.appendingPathComponent(item.mediaFileName) }
+    func originalMediaURLs(for item: LibraryItemRecord) -> [URL] { [] }
+    func thumbnailURL(for item: LibraryItemRecord) -> URL { FileManager.default.temporaryDirectory.appendingPathComponent(item.thumbnailFileName) }
+    func editedMediaURL(for item: LibraryItemRecord) -> URL? { nil }
+
+    @discardableResult
+    func saveEdit(for item: LibraryItemRecord, editedData: Data) -> LibraryItemRecord? { nil }
+    @discardableResult
+    func revertEdit(for item: LibraryItemRecord) -> LibraryItemRecord? { nil }
+    func delete(_ item: LibraryItemRecord) {
+        items.removeAll { $0.id == item.id }
     }
 }

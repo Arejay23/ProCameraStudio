@@ -656,6 +656,57 @@ final class CameraService: NSObject, CameraServicing {
         }
     }
 
+    func captureFocusStack(settings: FocusStackSettings, progress: @escaping (Int, Int) -> Void) async throws -> [CapturedPhoto] {
+        guard let device = videoDeviceInput?.device, device.isFocusModeSupported(.locked) else {
+            throw CameraError.captureFailed("Manual focus isn't supported by this camera/lens.")
+        }
+        let positions = Self.focusPositions(count: settings.frameCount)
+        var frames: [CapturedPhoto] = []
+
+        for (index, position) in positions.enumerated() {
+            try Task.checkCancellation()
+            try await setFocusPositionOnly(position, device: device)
+            let captured = try await captureSingleFrameForStacking()
+            frames.append(captured)
+            progress(index + 1, positions.count)
+        }
+
+        if device.isFocusModeSupported(.continuousAutoFocus) {
+            try? await setFocusPositionOnly(nil, device: device)
+        }
+        return frames
+    }
+
+    private static func focusPositions(count: Int) -> [Float] {
+        guard count > 1 else { return [0.5] }
+        return (0..<count).map { Float($0) / Float(count - 1) }
+    }
+
+    /// Sets manual focus lens position and waits for AVFoundation's own
+    /// completion handler, same reasoning as setExposureBiasOnly. Passing nil
+    /// restores continuous autofocus instead of locking to a position.
+    private func setFocusPositionOnly(_ position: Float?, device: AVCaptureDevice) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            sessionQueue.async {
+                do {
+                    try device.lockForConfiguration()
+                } catch {
+                    continuation.resume(throwing: CameraError.configurationFailed("Camera is busy: \(error.localizedDescription)"))
+                    return
+                }
+                if let position {
+                    device.setFocusModeLocked(lensPosition: position) { _ in
+                        continuation.resume()
+                    }
+                } else {
+                    device.focusMode = .continuousAutoFocus
+                    continuation.resume()
+                }
+                device.unlockForConfiguration()
+            }
+        }
+    }
+
     /// Single-frame capture used by burst/bracket sequences: always .processed
     /// (RAW bursts would be impractically large), favoring speed over quality
     /// since consistency across frames matters more than any one frame here.

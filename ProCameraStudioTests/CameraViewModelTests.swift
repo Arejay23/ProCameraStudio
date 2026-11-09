@@ -6,7 +6,7 @@ final class CameraViewModelTests: XCTestCase {
     @MainActor
     func testStartGrantsAuthorizationAndStartsSession() async {
         let cameraService = MockCameraService(authorized: true)
-        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: MockMediaStorage(authorized: true))
+        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: MockMediaStorage(authorized: true), libraryStore: MockLibraryStore())
 
         await viewModel.start()
 
@@ -18,7 +18,7 @@ final class CameraViewModelTests: XCTestCase {
     @MainActor
     func testStartWithDeniedAuthorizationDoesNotStartSession() async {
         let cameraService = MockCameraService(authorized: false)
-        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: MockMediaStorage(authorized: true))
+        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: MockMediaStorage(authorized: true), libraryStore: MockLibraryStore())
 
         await viewModel.start()
 
@@ -29,7 +29,7 @@ final class CameraViewModelTests: XCTestCase {
     @MainActor
     func testSwitchCameraTogglesPosition() async {
         let cameraService = MockCameraService(authorized: true)
-        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: MockMediaStorage(authorized: true))
+        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: MockMediaStorage(authorized: true), libraryStore: MockLibraryStore())
         await viewModel.start()
 
         viewModel.switchCamera()
@@ -40,7 +40,7 @@ final class CameraViewModelTests: XCTestCase {
     @MainActor
     func testSetManualISOUpdatesConfiguration() async {
         let cameraService = MockCameraService(authorized: true)
-        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: MockMediaStorage(authorized: true))
+        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: MockMediaStorage(authorized: true), libraryStore: MockLibraryStore())
         await viewModel.start()
 
         viewModel.setManualISO(200)
@@ -52,7 +52,7 @@ final class CameraViewModelTests: XCTestCase {
     @MainActor
     func testResetToAutoClearsManualOverrides() async {
         let cameraService = MockCameraService(authorized: true)
-        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: MockMediaStorage(authorized: true))
+        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: MockMediaStorage(authorized: true), libraryStore: MockLibraryStore())
         await viewModel.start()
         viewModel.setManualISO(400)
         viewModel.setManualFocus(0.3)
@@ -66,7 +66,7 @@ final class CameraViewModelTests: XCTestCase {
     @MainActor
     func testFocusAndMeterClearsManualExposureAndFocus() async {
         let cameraService = MockCameraService(authorized: true)
-        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: MockMediaStorage(authorized: true))
+        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: MockMediaStorage(authorized: true), libraryStore: MockLibraryStore())
         await viewModel.start()
         viewModel.setManualISO(400)
 
@@ -79,7 +79,7 @@ final class CameraViewModelTests: XCTestCase {
     @MainActor
     func testSelectPhotoFormatUpdatesConfiguration() async {
         let cameraService = MockCameraService(authorized: true)
-        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: MockMediaStorage(authorized: true))
+        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: MockMediaStorage(authorized: true), libraryStore: MockLibraryStore())
         await viewModel.start()
 
         viewModel.selectPhotoFormat(.appleProRAW)
@@ -104,7 +104,7 @@ final class CameraViewModelTests: XCTestCase {
                 fNumber: 1.78
             )
         )
-        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: MockMediaStorage(authorized: true))
+        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: MockMediaStorage(authorized: true), libraryStore: MockLibraryStore())
         await viewModel.start()
 
         viewModel.capturePhoto()
@@ -119,7 +119,7 @@ final class CameraViewModelTests: XCTestCase {
     func testCapturePhotoSavesWhenAuthorized() async throws {
         let cameraService = MockCameraService(authorized: true)
         let mediaStorage = MockMediaStorage(authorized: true)
-        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: mediaStorage)
+        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: mediaStorage, libraryStore: MockLibraryStore())
         await viewModel.start()
 
         viewModel.capturePhoto()
@@ -134,7 +134,7 @@ final class CameraViewModelTests: XCTestCase {
     func testStartMultiFrameCaptureSavesStackedResult() async {
         let cameraService = MockCameraService(authorized: true)
         let mediaStorage = MockMediaStorage(authorized: true)
-        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: mediaStorage)
+        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: mediaStorage, libraryStore: MockLibraryStore())
         await viewModel.start()
 
         viewModel.startMultiFrameCapture(mode: .noiseReduction)
@@ -154,7 +154,7 @@ final class CameraViewModelTests: XCTestCase {
             CapturedPhoto(data: Data([0x12]), isRaw: false, width: 100, height: 100, fileSizeBytes: 1, requestedFormat: .processed, iso: nil, exposureTimeSeconds: nil, fNumber: nil)
         ])
         let mediaStorage = MockMediaStorage(authorized: true)
-        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: mediaStorage)
+        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: mediaStorage, libraryStore: MockLibraryStore())
         await viewModel.start()
 
         viewModel.startExposureBracket()
@@ -167,7 +167,7 @@ final class CameraViewModelTests: XCTestCase {
     func testCaptureButtonTappedWithNoTimerCapturesImmediately() async {
         let cameraService = MockCameraService(authorized: true)
         let mediaStorage = MockMediaStorage(authorized: true)
-        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: mediaStorage)
+        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: mediaStorage, libraryStore: MockLibraryStore())
         await viewModel.start()
 
         viewModel.captureButtonTapped()
@@ -180,7 +180,7 @@ final class CameraViewModelTests: XCTestCase {
     func testSwitchToVideoModeRequestsMicrophoneAndUpdatesConfiguration() async {
         let cameraService = MockCameraService(authorized: true)
         cameraService.micAuthorized = true
-        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: MockMediaStorage(authorized: true))
+        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: MockMediaStorage(authorized: true), libraryStore: MockLibraryStore())
         await viewModel.start()
 
         await viewModel.switchToVideoMode()
@@ -193,7 +193,7 @@ final class CameraViewModelTests: XCTestCase {
     func testSwitchToVideoModeWithDeniedMicrophoneStaysInPhotoMode() async {
         let cameraService = MockCameraService(authorized: true)
         cameraService.micAuthorized = false
-        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: MockMediaStorage(authorized: true))
+        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: MockMediaStorage(authorized: true), libraryStore: MockLibraryStore())
         await viewModel.start()
 
         await viewModel.switchToVideoMode()
@@ -206,7 +206,7 @@ final class CameraViewModelTests: XCTestCase {
     func testStartAndStopRecordingSavesVideo() async {
         let cameraService = MockCameraService(authorized: true)
         let mediaStorage = MockMediaStorage(authorized: true)
-        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: mediaStorage)
+        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: mediaStorage, libraryStore: MockLibraryStore())
         await viewModel.start()
         await viewModel.switchToVideoMode()
 
@@ -219,6 +219,63 @@ final class CameraViewModelTests: XCTestCase {
         XCTAssertTrue(done)
         XCTAssertFalse(viewModel.isRecording)
         XCTAssertNotNil(mediaStorage.savedVideoURL)
+    }
+
+    @MainActor
+    func testCapturePhotoAddsToLocalLibrary() async {
+        let cameraService = MockCameraService(authorized: true)
+        let libraryStore = MockLibraryStore()
+        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: MockMediaStorage(authorized: true), libraryStore: libraryStore)
+        await viewModel.start()
+
+        viewModel.capturePhoto()
+
+        let done = await waitUntil { libraryStore.addPhotoCallCount == 1 }
+        XCTAssertTrue(done)
+        XCTAssertEqual(libraryStore.items.first?.kind, .photo)
+    }
+
+    @MainActor
+    func testStartHDRCaptureSavesFusedResultWithOriginals() async {
+        let cameraService = MockCameraService(authorized: true)
+        cameraService.bracketResult = .success(Self.makeSyntheticBracketFrames())
+        let libraryStore = MockLibraryStore()
+        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: MockMediaStorage(authorized: true), libraryStore: libraryStore)
+        await viewModel.start()
+
+        viewModel.startHDRCapture()
+
+        let done = await waitUntil(timeout: 5.0) { viewModel.lastComputationalResult != nil }
+        XCTAssertTrue(done)
+        XCTAssertEqual(libraryStore.items.first?.kind, .hdrResult)
+        XCTAssertEqual(libraryStore.items.first?.originalFileNames.count, 3)
+    }
+
+    @MainActor
+    func testStartFocusStackSavesStackedResult() async {
+        let cameraService = MockCameraService(authorized: true)
+        cameraService.focusStackResult = .success(Self.makeSyntheticFocusFrames())
+        let libraryStore = MockLibraryStore()
+        let viewModel = CameraViewModel(cameraService: cameraService, mediaStorage: MockMediaStorage(authorized: true), libraryStore: libraryStore)
+        await viewModel.start()
+
+        viewModel.startFocusStack()
+
+        let done = await waitUntil(timeout: 5.0) { viewModel.lastComputationalResult != nil }
+        XCTAssertTrue(done)
+        XCTAssertEqual(libraryStore.items.first?.kind, .focusStackResult)
+    }
+
+    private static func makeSyntheticBracketFrames() -> [CapturedPhoto] {
+        [
+            SyntheticImage.capturedPhoto(color: (0.1, 0.1, 0.1), size: 64),
+            SyntheticImage.capturedPhoto(color: (0.5, 0.5, 0.5), size: 64),
+            SyntheticImage.capturedPhoto(color: (0.9, 0.9, 0.9), size: 64)
+        ]
+    }
+
+    private static func makeSyntheticFocusFrames() -> [CapturedPhoto] {
+        (0..<3).map { _ in SyntheticImage.capturedPhoto(color: (0.5, 0.5, 0.5), size: 64) }
     }
 
     @MainActor

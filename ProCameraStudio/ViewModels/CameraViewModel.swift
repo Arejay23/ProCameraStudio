@@ -39,9 +39,15 @@ final class CameraViewModel: ObservableObject {
     @Published private(set) var recordingFileSizeBytes = 0
     @Published private(set) var lastRecordedVideo: RecordedVideoInfo?
 
+    // Phase 6: computational photography (HDR fusion, focus stacking). Shares
+    // one progress/result pair since only one can run at a time.
+    @Published private(set) var computationalProgress: (current: Int, total: Int)?
+    @Published private(set) var lastComputationalResult: CapturedPhotoInfo?
+
     nonisolated let session: AVCaptureSession
     private let cameraService: CameraServicing
     private let mediaStorage: MediaStoring
+    private let libraryStore: LibraryStoring
     private let motionMonitor = MotionMonitor()
     private var cancellables = Set<AnyCancellable>()
 
@@ -51,10 +57,21 @@ final class CameraViewModel: ObservableObject {
     private var bracketTask: Task<Void, Never>?
     private var recordingTimerTask: Task<Void, Never>?
     private var recordingStartDate: Date?
+    private var hdrTask: Task<Void, Never>?
+    private var focusStackTask: Task<Void, Never>?
 
-    init(cameraService: CameraServicing = CameraService(), mediaStorage: MediaStoring = MediaStorageService()) {
+    // No default for libraryStore: it's @MainActor-isolated, and Swift
+    // evaluates default-argument expressions in a nonisolated context, so
+    // `= LibraryStore()` here is a hard compile error. Every call site
+    // (ContentView, tests) passes it explicitly instead.
+    init(
+        cameraService: CameraServicing = CameraService(),
+        mediaStorage: MediaStoring = MediaStorageService(),
+        libraryStore: LibraryStoring
+    ) {
         self.cameraService = cameraService
         self.mediaStorage = mediaStorage
+        self.libraryStore = libraryStore
         self.session = cameraService.session
         motionMonitor.$isStable
             .assign(to: \.isDeviceStable, on: self)
@@ -287,7 +304,7 @@ final class CameraViewModel: ObservableObject {
                 case .success(let captured):
                     let info = CapturedPhotoInfo(from: captured)
                     self.lastCapture = info
-                    await self.save(captured.data)
+                    await self.save(captured)
                     try? await Task.sleep(nanoseconds: 4_000_000_000)
                     if self.lastCapture == info {
                         self.lastCapture = nil
@@ -300,17 +317,18 @@ final class CameraViewModel: ObservableObject {
         }
     }
 
-    private func save(_ data: Data) async {
+    private func save(_ captured: CapturedPhoto) async {
         guard await mediaStorage.requestAddOnlyAuthorization() else {
             errorMessage = CameraError.permissionDenied.errorDescription
             isCapturing = false
             return
         }
-        let result = await saveAsync(data)
+        let result = await saveAsync(captured.data)
         isCapturing = false
         switch result {
         case .success:
             didSavePhoto = true
+            addToLibrary(captured)
         case .failure(let error):
             errorMessage = error.errorDescription
         }
@@ -322,6 +340,24 @@ final class CameraViewModel: ObservableObject {
                 continuation.resume(returning: result)
             }
         }
+    }
+
+    /// Adds a captured photo to the app's local library (Phase 7) — never the
+    /// Photos library, which already got its own copy via mediaStorage.
+    private func addToLibrary(_ captured: CapturedPhoto, originals: [CapturedPhoto] = [], kindOverride: LibraryItemKind? = nil) {
+        let info = CapturedPhotoInfo(from: captured)
+        let kind = kindOverride ?? (captured.isRaw ? .rawPhoto : .photo)
+        libraryStore.addPhoto(
+            data: captured.data,
+            kind: kind,
+            width: captured.width,
+            height: captured.height,
+            formatLabel: info.formatLabel,
+            iso: captured.iso,
+            exposureTimeSeconds: captured.exposureTimeSeconds,
+            fNumber: captured.fNumber,
+            originals: originals.map { $0.data }
+        )
     }
 
     // MARK: - Multi-frame capture (Phase 4)
@@ -374,6 +410,8 @@ final class CameraViewModel: ObservableObject {
         }
         if case .failure(let error) = await saveAsync(result.stacked.data) {
             errorMessage = error.errorDescription
+        } else {
+            addToLibrary(result.stacked, originals: result.originalFrames, kindOverride: .nightStackResult)
         }
         for frame in result.originalFrames {
             _ = await saveAsync(frame.data)
@@ -415,7 +453,9 @@ final class CameraViewModel: ObservableObject {
             return
         }
         for frame in frames {
-            _ = await saveAsync(frame.data)
+            if case .success = await saveAsync(frame.data) {
+                addToLibrary(frame)
+            }
         }
         if let last = frames.last {
             lastCapture = CapturedPhotoInfo(from: last)
@@ -429,6 +469,8 @@ final class CameraViewModel: ObservableObject {
         stopIntervalCapture()
         cancelMultiFrameCapture()
         cancelExposureBracket()
+        cancelHDRCapture()
+        cancelFocusStack()
         if isRecording {
             stopRecording()
         }
@@ -513,6 +555,14 @@ final class CameraViewModel: ObservableObject {
         }
         switch result {
         case .success:
+            let dimensions = recorded.resolution.pixelDimensions
+            libraryStore.addVideo(
+                fileURL: recorded.url,
+                width: dimensions.width,
+                height: dimensions.height,
+                durationSeconds: recorded.duration,
+                formatLabel: recorded.usedProRes ? "Apple ProRes" : "Video"
+            )
             try? FileManager.default.removeItem(at: recorded.url)
         case .failure(let error):
             // Leave the temp file in place on failure rather than discarding
@@ -522,6 +572,102 @@ final class CameraViewModel: ObservableObject {
         try? await Task.sleep(nanoseconds: 4_000_000_000)
         if lastRecordedVideo == info {
             lastRecordedVideo = nil
+        }
+    }
+
+    // MARK: - Computational photography (Phase 6)
+
+    func startHDRCapture(frameCount: Int = 3, stepEV: Float = 2.0) {
+        guard hdrTask == nil, focusStackTask == nil else { return }
+        let settings = BracketSettings(frameCount: frameCount, exposureStepEV: stepEV)
+        computationalProgress = (0, frameCount + 1)
+
+        hdrTask = Task { @MainActor in
+            do {
+                let frames = try await cameraService.captureExposureBracket(settings: settings) { current, total in
+                    Task { @MainActor in
+                        self.computationalProgress = (current, total + 1)
+                    }
+                }
+                try Task.checkCancellation()
+                let fused = await Task.detached(priority: .userInitiated) {
+                    HDRFusionProcessor.fuse(frames: frames)
+                }.value
+                guard let fused else {
+                    errorMessage = "HDR fusion failed."
+                    computationalProgress = nil
+                    hdrTask = nil
+                    return
+                }
+                computationalProgress = (frameCount + 1, frameCount + 1)
+                await saveComputationalResult(fused, originals: frames, kind: .hdrResult)
+            } catch is CancellationError {
+                // User-cancelled; nothing to report.
+            } catch {
+                errorMessage = (error as? CameraError)?.errorDescription ?? error.localizedDescription
+            }
+            computationalProgress = nil
+            hdrTask = nil
+        }
+    }
+
+    func cancelHDRCapture() {
+        hdrTask?.cancel()
+    }
+
+    func startFocusStack(frameCount: Int = 5) {
+        guard hdrTask == nil, focusStackTask == nil else { return }
+        let settings = FocusStackSettings(frameCount: frameCount)
+        computationalProgress = (0, frameCount + 1)
+
+        focusStackTask = Task { @MainActor in
+            do {
+                let frames = try await cameraService.captureFocusStack(settings: settings) { current, total in
+                    Task { @MainActor in
+                        self.computationalProgress = (current, total + 1)
+                    }
+                }
+                try Task.checkCancellation()
+                let stacked = await Task.detached(priority: .userInitiated) {
+                    FocusStackProcessor.stack(frames: frames)
+                }.value
+                guard let stacked else {
+                    errorMessage = "Focus stacking failed."
+                    computationalProgress = nil
+                    focusStackTask = nil
+                    return
+                }
+                computationalProgress = (frameCount + 1, frameCount + 1)
+                await saveComputationalResult(stacked, originals: frames, kind: .focusStackResult)
+            } catch is CancellationError {
+                // User-cancelled; nothing to report.
+            } catch {
+                errorMessage = (error as? CameraError)?.errorDescription ?? error.localizedDescription
+            }
+            computationalProgress = nil
+            focusStackTask = nil
+        }
+    }
+
+    func cancelFocusStack() {
+        focusStackTask?.cancel()
+    }
+
+    private func saveComputationalResult(_ result: CapturedPhoto, originals: [CapturedPhoto], kind: LibraryItemKind) async {
+        let info = CapturedPhotoInfo(from: result)
+        lastComputationalResult = info
+        guard await mediaStorage.requestAddOnlyAuthorization() else {
+            errorMessage = CameraError.permissionDenied.errorDescription
+            return
+        }
+        if case .failure(let error) = await saveAsync(result.data) {
+            errorMessage = error.errorDescription
+        } else {
+            addToLibrary(result, originals: originals, kindOverride: kind)
+        }
+        try? await Task.sleep(nanoseconds: 4_000_000_000)
+        if lastComputationalResult == info {
+            lastComputationalResult = nil
         }
     }
 }

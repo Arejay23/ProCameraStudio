@@ -148,7 +148,56 @@ is checked so an interruption-triggered stop isn't misreported as a failure. `Re
 same split established by `CapturedPhoto`/`CapturedPhotoInfo` in Phase 3. Test target grew from
 12 to 15 tests.
 
-*(Phases 6–9 unchanged from the original roadmap — see the full phase prompts already
+## Phase 6 — Computational photography (implemented)
+
+Delivered: `HDRFusionProcessor` and `FocusStackProcessor`, both pure Core Image — no
+AVFoundation dependency at all, satisfying "keep computational processing independent from the
+live camera session" literally, not just in spirit. HDR fusion reuses
+`captureExposureBracket` from Phase 4 for its source frames rather than adding a parallel
+capture path, and implements a deliberately simplified, honest exposure-fusion technique
+(highlight/shadow recovery blending with a difference-based deghosting mask) rather than full
+Mertens fusion — documented as the simplification it is. Focus stacking adds
+`captureFocusStack` to `CameraServicing` (sweeping `setFocusModeLocked`, mirroring
+`captureExposureBracket`'s `setExposureTargetBias` pattern exactly), and
+`FocusStackProcessor` selects per-pixel from whichever frame has the highest Laplacian
+edge-energy there.
+
+The real payoff of the "independent from the camera session" discipline: both processors
+could be unit-tested with synthetic solid-color images with zero camera/device involved
+(`SyntheticImage`, `ImageProcessingTests`), and those tests render the actual filter chains for
+real — not just compile-check them. CIFilter parameters are string-keyed, so a wrong name
+doesn't fail to compile, it silently no-ops or returns nothing at runtime; this is exactly the
+risk class that produced the shipped crash noted in Phase 3, and this time it was caught before
+ever reaching a device. Processing runs via `Task.detached(priority: .userInitiated)` off the
+main actor so the UI stays responsive during fusion. A dedicated `ImageProcessingTests` suite
+(7 tests) exercises the real filter chains against synthetic images; `CameraViewModelTests`
+grew from 15 to 18 tests covering the HDR/focus-stack workflow end to end.
+
+## Phase 7 — Photo library and editing tools (implemented)
+
+Delivered: `LibraryStore`, an app-private media library (`Documents/MediaLibrary`) that every
+capture path (single photo, RAW/ProRAW, night-stack, bracket frames, HDR/focus-stack + their
+source frames, video) also writes into — a deliberate architectural choice made explicitly with
+the user rather than assumed: a gallery that reads captures back needs broader-than-add-only
+access to *something*, and the alternative (upgrading Photos permission) would have reversed a
+privacy choice from Phase 1. Thumbnails use `CGImageSourceCreateThumbnailAtIndex`
+(`AVAssetImageGenerator` for video) rather than decoding full images just to downscale them.
+Editing is genuinely non-destructive: `PhotoEditProcessor` (Core Image, same
+independent-of-camera-session pattern as Phase 6's processors) always renders a new file;
+`LibraryItemRecord.editFileName` points at it separately from `mediaFileName`, and the source is
+never touched. `GalleryView`/`MediaDetailView`/`PhotoEditView` depend on the concrete
+`LibraryStore` class (not the `LibraryStoring` protocol) since SwiftUI's `@ObservedObject` needs
+the real `@Published` object — `LibraryStoring` exists specifically so `CameraViewModel` stays
+testable via `MockLibraryStore`, the same split already used for `CameraServicing`/`MediaStoring`.
+
+One real Swift 6 concurrency bug surfaced and was fixed during this phase, not deferred:
+`CameraViewModel`'s `libraryStore` parameter couldn't have a default value
+(`= LibraryStore()`), because `LibraryStore` is `@MainActor`-isolated and Swift evaluates
+default-argument expressions in a nonisolated context — a hard compile error, not a warning.
+Fixed by making the parameter required everywhere instead of working around it (18
+`CameraViewModelTests` + 7 `ImageProcessingTests` = 25 tests total).
+
+*(Phases 8–9 unchanged from the original roadmap — see the full phase prompts already
 reviewed with the user. Each should: extend `CaptureConfiguration`/`CameraServicing` rather
 than replace them, route Photos I/O through `MediaStoring`, add tests for new logic, and
 assume physical-device-only testing.)*
